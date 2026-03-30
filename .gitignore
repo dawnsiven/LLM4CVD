@@ -10,5 +10,6 @@ outputs
 raw_code
 data_balanced/*
 data_balance/*
+!data_balance/make_subsampled.py
 tmp
 venv/*
