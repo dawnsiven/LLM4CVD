@@ -8,4 +8,7 @@ joern/*
 .vscode
 outputs
 raw_code
+data_balanced/*
+data_balance/*
 tmp
+venv/*
