@@ -34,11 +34,11 @@ CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --test_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_test.json" \
     --epoch 5 \
     --block_size 512 \
-    --train_batch_size 32 \
-    --eval_batch_size 64 \
+    --train_batch_size  4\ 
+    --eval_batch_size 4 \
     --evaluate_during_training \
     --seed 42 \
-    2>"outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${POS_RATIO}/train_${MODEL_NAME}_${DATASET_NAME}_${LENGTH}_${POS_RATIO}.log"
+    2>"outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${LENGTH}_${POS_RATIO}/train_${MODEL_NAME}_${DATASET_NAME}_${LENGTH}_${POS_RATIO}.log"
 elif [[ "$MODEL_NAME" == "UniXcoder" ]]; then
 CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --output_dir="outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${LENGTH}_${POS_RATIO}/" \
@@ -52,10 +52,10 @@ CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --test_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_test.json" \
     --num_train_epochs 5 \
     --block_size 512 \
-    --train_batch_size 32 \
-    --eval_batch_size 64 \
+    --train_batch_size 4 \
+    --eval_batch_size 4 \
     --seed 42 \
-    2>"outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${POS_RATIO}/train_${MODEL_NAME}_${DATASET_NAME}_${LENGTH}_${POS_RATIO}.log"
+    2>"outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${LENGTH}_${POS_RATIO}/train_${MODEL_NAME}_${DATASET_NAME}_${LENGTH}_${POS_RATIO}.log"
 else
 CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --output_dir="outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${LENGTH}_${POS_RATIO}/" \
@@ -71,9 +71,9 @@ CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --test_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_test.json" \
     --epoch 5 \
     --block_size 512 \
-    --train_batch_size 32 \
-    --eval_batch_size 64 \
+    --train_batch_size 4 \
+    --eval_batch_size 4 \
     --evaluate_during_training \
     --seed 42 \
-    2>"outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${POS_RATIO}/train_${MODEL_NAME}_${DATASET_NAME}_${LENGTH}_${POS_RATIO}.log"
+    2>"outputs/${MODEL_NAME}_imbalance/${DATASET_NAME}_${LENGTH}_${POS_RATIO}/train_${MODEL_NAME}_${DATASET_NAME}_${LENGTH}_${POS_RATIO}.log"
 fi

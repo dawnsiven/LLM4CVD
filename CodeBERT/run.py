@@ -353,6 +353,8 @@ def test(args, model, tokenizer, split="test"):
 
     logits=np.concatenate(logits,0)
     labels=np.concatenate(labels,0)
+    vul_prob = logits[:,0] 
+    # preds = np.argmax(logits, axis=1)
     preds=logits[:,0]>0.5
     y_trues, y_preds = labels, preds
     acc = accuracy_score(y_trues, y_preds)
@@ -361,10 +363,10 @@ def test(args, model, tokenizer, split="test"):
     f1 = f1_score(y_trues, y_preds)
     fpr = fpr_score(y_trues, y_preds)
 
-    temp_df = pd.DataFrame({'Label': [], 'Prediction': []})
+    temp_df = pd.DataFrame({'Label': [], 'Prediction': [],'prob':[]})
     temp_df.to_csv(args.csv_path, index=False, mode='w', header=True)
-    for label, pred in zip(y_trues, y_preds):
-        temp_df = pd.DataFrame({'Label': [int(label)], 'Prediction': [int(pred)]})
+    for label, pred,prob in zip(y_trues, y_preds,vul_prob):
+        temp_df = pd.DataFrame({'Label': [int(label)], 'Prediction': [int(pred)],'prob':[float(prob)]})
         temp_df.to_csv(args.csv_path, index=False, mode='a', header=False)
 
     result = {
