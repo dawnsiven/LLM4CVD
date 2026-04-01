@@ -322,6 +322,9 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
 def test(args, model, tokenizer, split="test"):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_dataset = TextDataset(tokenizer, args,args.test_data_file)
+    with open(args.test_data_file, 'r') as json_file:
+        data = json.load(json_file)
+        index_list = [item.get('index') for item in data]
 
 
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
@@ -357,16 +360,18 @@ def test(args, model, tokenizer, split="test"):
     # preds = np.argmax(logits, axis=1)
     preds=logits[:,0]>0.5
     y_trues, y_preds = labels, preds
+    if len(index_list) != len(y_trues):
+        raise ValueError("Index list length does not match labels length")
     acc = accuracy_score(y_trues, y_preds)
     recall = recall_score(y_trues, y_preds)
     precision = precision_score(y_trues, y_preds)
     f1 = f1_score(y_trues, y_preds)
     fpr = fpr_score(y_trues, y_preds)
 
-    temp_df = pd.DataFrame({'Label': [], 'Prediction': [],'prob':[]})
+    temp_df = pd.DataFrame({'Index': [], 'Label': [], 'Prediction': [],'prob':[]})
     temp_df.to_csv(args.csv_path, index=False, mode='w', header=True)
-    for label, pred,prob in zip(y_trues, y_preds,vul_prob):
-        temp_df = pd.DataFrame({'Label': [int(label)], 'Prediction': [int(pred)],'prob':[float(prob)]})
+    for index, label, pred,prob in zip(index_list, y_trues, y_preds,vul_prob):
+        temp_df = pd.DataFrame({'Index': [index], 'Label': [int(label)], 'Prediction': [int(pred)],'prob':[float(prob)]})
         temp_df.to_csv(args.csv_path, index=False, mode='a', header=False)
 
     result = {

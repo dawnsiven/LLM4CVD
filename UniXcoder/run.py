@@ -314,7 +314,8 @@ def test(args, model, tokenizer, data_file):
         with open(args.csv_path, 'w') as f:
             f.write('CWE,Label,Prediction,Prob\n')
 
-    probs2 = [[prob[0], 1 - prob[0]] for prob in probs]
+    probs2 = [[prob[0],prob[1]] for prob in probs]
+    # probs2 = [[prob[0], 1 - prob[0]] for prob in probs]
     temp_df = pd.DataFrame({'CWE': [], 'Label': [], 'Prediction': [], 'Prob': []})
     temp_df.to_csv(args.csv_path, index=False, mode='w', header=True)
     for cwe, label, pred, prob in zip(cwe_list, labels, preds, probs2):
