@@ -322,6 +322,7 @@ def test(args, model, tokenizer, data_file):
     # probs2 = [[prob[0],prob[1]] for prob in probs]
     probs2 = [prob[1] for prob in probs]
     # probs2 = [[prob[0], 1 - prob[0]] for prob in probs]
+    # probs2 = 1 -np.abs(probs[:,1] - probs[:,0])
     temp_df = pd.DataFrame({'Index': [], 'CWE': [], 'Label': [], 'Prediction': [], 'Prob': []})
     temp_df.to_csv(args.csv_path, index=False, mode='w', header=True)
     for index, cwe, label, pred, prob in zip(index_list, cwe_list, labels, preds, probs2):

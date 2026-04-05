@@ -13,3 +13,5 @@ data_balance/*
 !data_balance/make_subsampled.py
 tmp
 venv/*
+LLM_TEST/exp.yaml
+LLM_TEST/.env
