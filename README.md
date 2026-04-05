@@ -66,6 +66,42 @@ Before using these scripts, you need to:
 
 The trained models and output log will be generated in the `outputs/` directory.
 
+### FastAPI backend for frontend integration
+
+To let a frontend submit jobs and poll training or inference status, this repository now includes a FastAPI backend in `fastapi_backend/`.
+
+Start the backend from the repository root:
+
+```shell
+pip install -r requirements.txt
+./scripts/run_fastapi.sh 0.0.0.0 8000
+```
+
+After startup, you can open:
+
+- `http://127.0.0.1:8000/docs` for Swagger UI
+http://127.0.0.1:8000/docs
+
+- `http://192.168.3.6:8000/health` for a health check
+
+The main API groups are:
+
+- `POST /api/jobs/classical`: trigger `train.sh` or `test.sh`
+- `POST /api/jobs/classical-imbalance`: trigger `train_imbalance.sh` or `test_imbalance.sh`
+- `POST /api/jobs/llm`: trigger `finetune.sh` or `inference.sh`
+- `POST /api/jobs/llm-imbalance`: trigger `finetune_imbalance.sh` or `inference_imbalance.sh`
+- `POST /api/jobs/ablation`: trigger `finetune_ablation.sh` or `inference_ablation.sh`
+- `POST /api/jobs/to-graph`: trigger `to_graph.sh`
+- `GET /api/jobs`: list all submitted jobs
+- `GET /api/jobs/{job_id}`: query one job
+- `GET /api/jobs/{job_id}/log`: fetch the tail of the log file for frontend polling
+
+By default the backend enables CORS for all origins. You can restrict it with:
+
+```shell
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:3000 ./scripts/run_fastapi.sh
+```
+
 ### Quick start
 
 To quickly get started, you can run the following examples:

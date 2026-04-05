@@ -15,3 +15,5 @@ tmp
 venv/*
 LLM_TEST/exp.yaml
 LLM_TEST/.env
+LLM_TEST/output/*
+LLM_TEST/intermediate/*

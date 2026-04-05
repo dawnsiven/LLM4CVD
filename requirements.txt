@@ -10,4 +10,6 @@ tqdm==4.66.4
 fire==0.6.0
 tree_sitter==0.21.3
 ptvsd==4.3.2
+fastapi==0.115.0
+uvicorn==0.30.6
 # pip install  dgl -f https://data.dgl.ai/wheels/torch-2.1/cu121/repo.html
