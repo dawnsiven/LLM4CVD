@@ -44,6 +44,22 @@ def parse_args() -> argparse.Namespace:
         default="LLM_TEST/output",
         help="Root directory for LLM outputs.",
     )
+    parser.add_argument(
+        "--output_name",
+        default=None,
+        help="Output folder name under output_root. Defaults to dataset_id for backward compatibility.",
+    )
+    parser.add_argument(
+        "--output_by_prompt_version",
+        action="store_true",
+        help="Use <dataset_id>_<prompt_file_stem> as the output folder name.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N samples from the input JSON.",
+    )
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max_tokens", type=int, default=256)
     parser.add_argument("--timeout", type=int, default=120)
@@ -135,6 +151,7 @@ def call_chat_completion(
     url = api_base.rstrip("/") + "/chat/completions"
     body = {
         "model": model,
+        "stream": False,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "messages": [
@@ -155,8 +172,15 @@ def call_chat_completion(
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace").strip()
+        detail = f"HTTP {exc.code}"
+        if error_body:
+            detail = f"{detail}: {error_body}"
+        raise ValueError(detail) from exc
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -185,6 +209,19 @@ def write_csv(path: Path, rows: List[dict]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
+
+
+def build_output_name(
+    dataset_id: str,
+    prompt_file: Path,
+    output_name_arg: Optional[str],
+    output_by_prompt_version: bool,
+) -> str:
+    if output_name_arg:
+        return output_name_arg
+    if output_by_prompt_version:
+        return f"{dataset_id}_{prompt_file.stem}"
+    return dataset_id
 
 
 def main() -> None:
@@ -222,9 +259,19 @@ def main() -> None:
     prompt_file = Path(prompt_file_value).resolve()
     positive_samples = load_json(input_json)
     prompt_template = ensure_text(prompt_file)
+    if args.limit is not None:
+        if args.limit <= 0:
+            raise ValueError("--limit must be a positive integer.")
+        positive_samples = positive_samples[: args.limit]
 
     dataset_id = input_json.parent.name
-    output_dir = Path(output_root).resolve() / dataset_id
+    output_name = build_output_name(
+        dataset_id=dataset_id,
+        prompt_file=prompt_file,
+        output_name_arg=args.output_name,
+        output_by_prompt_version=args.output_by_prompt_version,
+    )
+    output_dir = Path(output_root).resolve() / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     judgment_rows: List[dict] = []
@@ -238,7 +285,7 @@ def main() -> None:
         llm_prediction: Optional[int] = None
         last_error = None
 
-        for attempt in range(1, args.retries + 1):
+        for attempt in range(1, retries + 1):
             try:
                 payload = call_chat_completion(
                     api_base=api_base,
@@ -301,6 +348,7 @@ def main() -> None:
         output_dir / "llm_summary.json",
         {
             "dataset_id": dataset_id,
+            "output_name": output_name,
             "input_json": str(input_json),
             "prompt_file": str(prompt_file),
             "model": model,
@@ -311,6 +359,7 @@ def main() -> None:
     )
 
     print(f"dataset_id={dataset_id}")
+    print(f"output_name={output_name}")
     print(f"total_samples={len(positive_samples)}")
     print(f"output_dir={output_dir}")
 

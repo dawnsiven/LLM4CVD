@@ -70,6 +70,46 @@ def safe_rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
+def compute_llm_only_metrics(llm_rows: List[dict]) -> Dict[str, float]:
+    valid_rows = [row for row in llm_rows if str(row.get("LLMPrediction", "")).strip() in {"0", "1"}]
+    labels = [to_int(row.get("Label")) for row in valid_rows]
+    preds = [to_int(row.get("LLMPrediction")) for row in valid_rows]
+    original_preds = [to_int(row.get("OriginalPrediction")) for row in valid_rows]
+    metrics = compute_metrics(labels, preds)
+
+    metrics.update(
+        {
+            "scope": "first_100_llm_only",
+            "description": (
+                "Metrics computed only on the LLM-reviewed samples, without merging back "
+                "into the full test set."
+            ),
+            "total": len(valid_rows),
+            "positive_labels": sum(label == 1 for label in labels),
+            "negative_labels": sum(label == 0 for label in labels),
+            "positive_predictions": sum(pred == 1 for pred in preds),
+            "negative_predictions": sum(pred == 0 for pred in preds),
+            "changed_vs_original": sum(
+                pred != original for pred, original in zip(preds, original_preds)
+            ),
+            "kept_vs_original": sum(pred == original for pred, original in zip(preds, original_preds)),
+            "actual_positive_kept_by_llm": sum(
+                label == 1 and pred == 1 for label, pred in zip(labels, preds)
+            ),
+            "actual_positive_rejected_by_llm": sum(
+                label == 1 and pred == 0 for label, pred in zip(labels, preds)
+            ),
+            "actual_negative_predicted_positive": sum(
+                label == 0 and pred == 1 for label, pred in zip(labels, preds)
+            ),
+            "actual_negative_predicted_negative": sum(
+                label == 0 and pred == 0 for label, pred in zip(labels, preds)
+            ),
+        }
+    )
+    return metrics
+
+
 def main() -> None:
     args = parse_args()
     load_env_file(args.env_file)
@@ -266,6 +306,12 @@ def main() -> None:
             indent=2,
         )
 
+    llm_only_metrics = compute_llm_only_metrics(llm_rows)
+    llm_only_metrics["source_file"] = str(llm_predictions_csv)
+    llm_only_metrics_path = output_dir / "metrics_first_100_llm_only.json"
+    with llm_only_metrics_path.open("w", encoding="utf-8") as handle:
+        json.dump(llm_only_metrics, handle, ensure_ascii=False, indent=2)
+
     print("original_metrics")
     print(json.dumps(original_metrics, ensure_ascii=False, indent=2))
     print("final_metrics")
@@ -276,9 +322,12 @@ def main() -> None:
     print(json.dumps(reviewed_subset_final_metrics, ensure_ascii=False, indent=2))
     print("positive_case_summary")
     print(json.dumps(positive_case_summary, ensure_ascii=False, indent=2))
+    print("llm_only_metrics")
+    print(json.dumps(llm_only_metrics, ensure_ascii=False, indent=2))
     print(f"merged_results={merged_csv_path}")
     print(f"positive_case_details={positive_cases_path}")
     print(f"metrics_json={metrics_path}")
+    print(f"llm_only_metrics_json={llm_only_metrics_path}")
 
 
 if __name__ == "__main__":
