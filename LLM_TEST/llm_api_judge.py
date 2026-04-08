@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output_root",
-        default="LLM_TEST/output",
+        default=None,
         help="Root directory for LLM outputs.",
     )
     parser.add_argument(
@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--sleep_seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--fail_fast_on_error",
+        action="store_true",
+        help="Exit immediately when an API or parsing error is encountered.",
+    )
     return parser.parse_args()
 
 
@@ -137,6 +142,18 @@ def parse_binary_label(text: str) -> Tuple[Optional[int], Optional[str]]:
     if re.search(r"\bno\b", lowered):
         return 0, "regex.no"
     return None, None
+
+
+def is_retryable_exception(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, ValueError):
+        message = str(exc)
+        if re.match(r"^HTTP 4\d\d\b", message):
+            return False
+    return True
 
 
 def call_chat_completion(
@@ -304,7 +321,8 @@ def main() -> None:
                 break
             except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
                 last_error = str(exc)
-                if attempt == retries:
+                should_retry = is_retryable_exception(exc)
+                if attempt == retries or not should_retry:
                     response_text = response_text or last_error or ""
                     parse_status = f"error:{type(exc).__name__}"
                     llm_prediction = None
@@ -339,6 +357,11 @@ def main() -> None:
             f"index={sample['index']} label={sample['ground_truth']} "
             f"original={sample['original_prediction']} llm={llm_prediction} status={parse_status}"
         )
+        if args.fail_fast_on_error and parse_status.startswith("error:"):
+            raise RuntimeError(
+                f"Fail-fast triggered at index={sample['index']} with status={parse_status}: "
+                f"{response_text}"
+            )
         time.sleep(sleep_seconds)
 
     write_json(output_dir / "llm_judgments.json", judgment_rows)

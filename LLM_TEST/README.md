@@ -30,6 +30,25 @@ python LLM_TEST/recompute_metrics.py --config LLM_TEST/exp.yaml --env_file LLM_T
 python LLM_TEST/llm_api_judge.py --model your_model_name --api_key your_key
 ```
 
+如果想针对某个提示词版本做一轮独立复测，并把结果写到新目录中，可以这样：
+
+```bash
+python LLM_TEST/llm_api_judge.py \
+  --prompt_file LLM_TEST/Prompt/CWE-119_0.1.txt \
+  --limit 100 \
+  --output_by_prompt_version
+
+python LLM_TEST/recompute_metrics.py \
+  --llm_predictions_csv LLM_TEST/output/<dataset_id>_CWE-119_0.1/llm_predictions.csv \
+  --output_dir LLM_TEST/output/<dataset_id>_CWE-119_0.1
+```
+
+说明：
+
+- `--limit 100`：只测试前 100 条
+- `--output_by_prompt_version`：输出到 `LLM_TEST/output/<dataset_id>_<prompt_file_stem>/`
+- `--output_name xxx`：如果你想手动指定目录名，也可以直接覆盖自动命名
+
 配置来源：
 
 - `LLM_TEST/.env`：真正的可变参数和密钥
