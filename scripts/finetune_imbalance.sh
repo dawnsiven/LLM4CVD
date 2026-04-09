@@ -26,12 +26,14 @@ BATCH_MAP["llama2"]=16
 BATCH_MAP["codellama"]=16
 BATCH_MAP["llama3"]=16
 BATCH_MAP["llama3.1"]=16
-BATCH_MAP["llama3.2"]=16
+BATCH_MAP["llama3.2"]=2
+
+LENGTH="0-512"
 mkdir -p "outputs/${MODEL_NAME}_lora_imbalance/${DATASET_NAME}_${POS_RATIO}/"
 
 echo "Batch size: ${BATCH_MAP[$MODEL_NAME]}"
 echo "Pos ratio: $(echo $POS_RATIO)"
-    --quantization \
+    # --quantization \
 CUDA_VISIBLE_DEVICES="${CUDA}" python LLM/finetuning.py \
     --use_peft \
     --peft_method lora \

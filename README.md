@@ -46,6 +46,7 @@ We provided user-friendly shell scripts to simplify model training and evaluatio
 
 ```shell
 scripts
+├── download_hf_models.py          # Download the Hugging Face models used in this repository into `model/`.
 ├── finetune.sh                     # Fine-tune LLMs for the experiments on Section 6.2 and 6.3.
 ├── inference.sh                    # Evaluate LLMs fine-tuned using `finetune.sh`.
 ├── finetune_imbalance.sh           # Fine-tune LLMs for the experiments on Section 6.4.
@@ -63,8 +64,28 @@ Before using these scripts, you need to:
 1. Use the `cd` command to set the running directory to the root of this repository.
 2. Place all data in the `data/` directory, following the directory structure and file names provided in our open-sourced HuggingFace repository.
 3. Install all dependencies listed in the `requirements.txt` by running the command `pip install -r requirements.txt`.
+4. Download the required Hugging Face base models if you plan to run the LLM-based experiments.
 
 The trained models and output log will be generated in the `outputs/` directory.
+
+If you want to download the Hugging Face models used by this repository into the `model/` directory, you can run:
+
+```shell
+python3 scripts/download_hf_models.py
+```
+
+You can also download only selected models:
+
+```shell
+python3 scripts/download_hf_models.py --models codebert graphcodebert unixcoder llama3.2
+```
+
+For gated repositories such as Llama / CodeLlama, make sure you have access permission on Hugging Face and set your token before downloading:
+
+```shell
+export HF_TOKEN=your_huggingface_token
+python3 scripts/download_hf_models.py --models llama3.2
+```
 
 ### FastAPI backend for frontend integration
 
@@ -125,9 +146,15 @@ To quickly get started, you can run the following examples:
 # For the experiments on Section 6.5.
 ./scripts/finetune_ablation.sh    reveal  llama3.1  8 16        0;
 ./scripts/inference_ablation.sh   reveal  llama3.1  8 16        0;
+# Llama 3.2 is also supported in LLM scripts.
+./scripts/finetune.sh             reveal  llama3.2  0-512 16    0;
+./scripts/inference.sh            reveal  llama3.2  0-512       0;
+./scripts/finetune_ablation.sh    bigvul  llama3.2  1 16        0;
+./scripts/inference_ablation.sh   bigvul  llama3.2  1 16        0;
 ```
 
 You can modify the command-line arguments in the above examples to perform other experiments mentioned in the paper.
+For the ablation scripts, the arguments are `<DATASET_NAME> <MODEL_NAME> <R> <ALPHA> [CUDA]`.
 
 Specifically, the second parameter represents the dataset name, which corresponds to the folder name in the `data/` directory.
 You can customize a new dataset (assume it is named `xxx`) by following the template of our open-sourced dataset on the HuggingFace repository. Store it according to the following file structure:
@@ -147,7 +174,7 @@ data
 
 The third parameter specifies the model name, which has the presetting supported values:
 
-- For scripts prefixed with `finetune` and `inference`, the supported values are: `llama-2`, `codellama`, `llama-3`, and `llama-3.1` (all lowercase).
+- For scripts prefixed with `finetune` and `inference`, the supported values are: `llama2`, `codellama`, `llama3`, `llama3.1`, and `llama3.2` (all lowercase).
 - For scripts prefixed with `train` and `test`, the supported values are: `Devign`, `ReGVD`, `GraphCodeBERT`, `CodeBERT`, and `UniXcoder` (case-sensitive).
 
 Other parameters can refer to the usage within every script.

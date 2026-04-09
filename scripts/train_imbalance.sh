@@ -1,13 +1,13 @@
 #!/bin/bash
 DATASET_NAME=$1
 MODEL_NAME=$2
-LENGTH="0-512"
-POS_RATIO=$3
-CUDA=${4:-"0"}
+LENGTH=$3
+POS_RATIO=$4
+CUDA=${5:-"0"}
 
 # Check if the first three parameters are provided
-if [ $# -lt 3 ]; then
-    echo "Usage: $0 <DATASET_NAME> <MODEL_NAME> <POS_RATIO> [CUDA]"
+if [ $# -lt 4 ]; then
+    echo "Usage: $0 <DATASET_NAME> <MODEL_NAME> <LENGTH> <POS_RATIO> [CUDA]"
     exit 1
 fi
 

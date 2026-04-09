@@ -17,12 +17,6 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 from torch.optim.lr_scheduler import StepLR
-from transformers import (
-    LlamaForCausalLM,
-    LlamaTokenizer,
-    CodeLlamaTokenizer,
-    LlamaConfig,
-)
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 from tqdm import tqdm
 from peft import PeftConfig, PeftModel
@@ -42,6 +36,7 @@ from utils.config_utils import (
     get_dataloader_kwargs,
 )
 from utils.dataset_utils import get_preprocessed_dataset
+from utils.model_utils import resolve_model_source
 
 from utils.train_utils import (
     train,
@@ -99,6 +94,12 @@ def main(**kwargs):
     #             train_config.start_epoch = num_epoch + 1
     #             train_config.peft_model = osp.join(output_dir, filename)
 
+    model_source, use_local_model = resolve_model_source(train_config.model_name)
+    if use_local_model:
+        print(f"--> Using local model from {model_source}")
+    else:
+        print(f"--> Local model not found under model/, downloading {train_config.model_name}")
+
     # Load the pre-trained model and setup its configuration
     # use_cache = False if train_config.enable_fsdp else None
     use_cache = not train_config.enable_fsdp
@@ -120,21 +121,21 @@ def main(**kwargs):
                             "please install latest nightly.")
         if rank == 0:
             model = AutoModelForCausalLM.from_pretrained(
-                train_config.model_name,
+                model_source,
                 # load_in_8bit=True if train_config.quantization else None,
                 quantization_config=bnb_config,
                 device_map="auto" if train_config.quantization else None,
                 use_cache=use_cache,
             )
         else:
-            llama_config = AutoConfig.from_pretrained(train_config.model_name)
+            llama_config = AutoConfig.from_pretrained(model_source)
             llama_config.use_cache = use_cache
             with torch.device("meta"):
                 model = AutoModelForCausalLM(llama_config)
 
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            train_config.model_name,
+            model_source,
             # load_in_8bit=True if train_config.quantization else None,
             quantization_config=bnb_config,
             device_map="auto" if train_config.quantization else None,
@@ -153,7 +154,7 @@ def main(**kwargs):
             print("Module 'optimum' not found. Please install 'optimum' it before proceeding.")
 
     # Load the tokenizer and add special tokens
-    tokenizer = AutoTokenizer.from_pretrained(train_config.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_source)
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
     print_model_size(model, train_config, rank if train_config.enable_fsdp else 0)

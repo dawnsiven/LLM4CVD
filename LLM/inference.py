@@ -7,13 +7,10 @@ import json
 import pandas as pd
 import argparse
 from peft import PeftModel
-from transformers import LlamaTokenizer, CodeLlamaTokenizer, LlamaForCausalLM,AutoTokenizer,AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-#
-MODEL_CLASSES = {
-    'llama': (LlamaForCausalLM, LlamaTokenizer),
-    'codellama': (LlamaForCausalLM, CodeLlamaTokenizer)
-}
+from utils.model_utils import resolve_model_source
+
 PROMPT_DICT = {
     "prompt_input": (
         "Below is an instruction that describes a task, paired with an input that provides further context. "
@@ -51,12 +48,17 @@ def fpr_score(y_true, y_pred):
 
 def main():
     args = parse_args()
-    model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model, padding_side='left')
+    model_source, use_local_model = resolve_model_source(args.base_model)
+    if use_local_model:
+        print(f"Using local model from {model_source}")
+    else:
+        print(f"Local model not found under model/, downloading {args.base_model}")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_source, padding_side='left')
     tokenizer.pad_token_id = tokenizer.eos_token_id
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = AutoModelForCausalLM.from_pretrained(
-        args.base_model,
+        model_source,
         # load_in_8bit=True,
         torch_dtype=torch.float16,
         device_map="auto",
