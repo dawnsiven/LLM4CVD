@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resume-download",
         action="store_true",
-        help="Resume an interrupted download.",
+        help="Deprecated compatibility flag. Downloads now resume automatically when possible.",
     )
     parser.add_argument(
         "--list",
@@ -150,12 +150,14 @@ def main() -> int:
 
         print(f"[download] {name}: {spec['repo_id']} -> {local_path}")
         try:
+            if args.resume_download:
+                print(
+                    "[note] --resume-download is no longer needed; huggingface_hub resumes automatically when possible."
+                )
             snapshot_download(
                 repo_id=spec["repo_id"],
                 local_dir=str(local_path),
-                local_dir_use_symlinks=False,
                 token=args.token,
-                resume_download=args.resume_download,
                 force_download=args.force,
             )
             print(f"[done] {name}")
