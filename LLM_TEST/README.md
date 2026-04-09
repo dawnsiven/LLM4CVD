@@ -13,7 +13,22 @@ cp LLM_TEST/.env.example LLM_TEST/.env
 ```bash
 python LLM_TEST/extract_positive_samples.py
 python LLM_TEST/llm_api_judge.py
+python LLM_TEST/llm_local_judge.py
 python LLM_TEST/recompute_metrics.py
+```
+
+如果你想把“LLM 复测 + 指标重算”合并成一次执行，可以直接运行：
+
+```bash
+bash LLM_TEST/run_review.sh
+```
+
+默认会读取 `LLM_TEST/exp.yaml` 和 `LLM_TEST/.env`，并复测前 `100` 条样本。
+
+也支持手动覆盖配置文件、环境文件和样本条数：
+
+```bash
+bash LLM_TEST/run_review.sh LLM_TEST/exp.yaml LLM_TEST/.env 100
 ```
 
 如果想换配置文件：
@@ -21,6 +36,7 @@ python LLM_TEST/recompute_metrics.py
 ```bash
 python LLM_TEST/extract_positive_samples.py --config LLM_TEST/exp.yaml --env_file LLM_TEST/.env
 python LLM_TEST/llm_api_judge.py --config LLM_TEST/exp.yaml --env_file LLM_TEST/.env
+python LLM_TEST/llm_local_judge.py --config LLM_TEST/exp.yaml --env_file LLM_TEST/.env
 python LLM_TEST/recompute_metrics.py --config LLM_TEST/exp.yaml --env_file LLM_TEST/.env
 ```
 
@@ -42,6 +58,23 @@ python LLM_TEST/recompute_metrics.py \
   --llm_predictions_csv LLM_TEST/output/<dataset_id>_CWE-119_0.1/llm_predictions.csv \
   --output_dir LLM_TEST/output/<dataset_id>_CWE-119_0.1
 ```
+
+如果你不想微调，而是想直接用本地 Hugging Face 模型做 zero-shot 判断，可以这样：
+
+```bash
+python LLM_TEST/llm_local_judge.py \
+  --input_json LLM_TEST/intermediate/<dataset_id>/positive_samples.json \
+  --prompt_file LLM_TEST/Prompt/CWE-119.txt \
+  --model llama3.2 \
+  --output_by_prompt_version
+```
+
+说明：
+
+- `--model` 支持别名：`llama2`、`codellama`、`llama3`、`llama3.1`、`llama3.2`
+- 也支持直接传本地模型目录或 Hugging Face repo id
+- 脚本会优先读取仓库根目录下 `model/` 中已下载的模型
+- 输出格式与 `llm_api_judge.py` 保持一致，可直接继续跑 `recompute_metrics.py`
 
 说明：
 
