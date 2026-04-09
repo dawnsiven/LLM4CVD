@@ -26,7 +26,8 @@ from transformers import (
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 from tqdm import tqdm
 from peft import PeftConfig, PeftModel
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+# from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 
 from configs import fsdp_config as FSDP_CONFIG
 from configs import train_config as TRAIN_CONFIG
@@ -99,7 +100,11 @@ def main(**kwargs):
     #             train_config.peft_model = osp.join(output_dir, filename)
 
     # Load the pre-trained model and setup its configuration
-    use_cache = False if train_config.enable_fsdp else None
+    # use_cache = False if train_config.enable_fsdp else None
+    use_cache = not train_config.enable_fsdp
+    bnb_config = None
+    if train_config.quantization:
+        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
     if train_config.enable_fsdp and train_config.low_cpu_fsdp:
         """
         for FSDP, we can save cpu memory by loading pretrained model on rank0 only.
@@ -116,7 +121,8 @@ def main(**kwargs):
         if rank == 0:
             model = AutoModelForCausalLM.from_pretrained(
                 train_config.model_name,
-                load_in_8bit=True if train_config.quantization else None,
+                # load_in_8bit=True if train_config.quantization else None,
+                quantization_config=bnb_config,
                 device_map="auto" if train_config.quantization else None,
                 use_cache=use_cache,
             )
@@ -129,7 +135,8 @@ def main(**kwargs):
     else:
         model = AutoModelForCausalLM.from_pretrained(
             train_config.model_name,
-            load_in_8bit=True if train_config.quantization else None,
+            # load_in_8bit=True if train_config.quantization else None,
+            quantization_config=bnb_config,
             device_map="auto" if train_config.quantization else None,
             use_cache=use_cache,
         )

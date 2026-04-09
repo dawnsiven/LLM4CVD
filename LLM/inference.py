@@ -57,7 +57,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
-        load_in_8bit=True,
+        # load_in_8bit=True,
         torch_dtype=torch.float16,
         device_map="auto",
         pad_token_id=tokenizer.eos_token_id
