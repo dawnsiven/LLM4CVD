@@ -80,11 +80,24 @@ You can also download only selected models:
 python3 scripts/download_hf_models.py --models codebert graphcodebert unixcoder llama3.2
 ```
 
+If you are in mainland China and want to use the community mirror, you can either pass the mirror shortcut:
+
+```shell
+python3 scripts/download_hf_models.py --mirror china --models codebert unixcoder llama3.2
+```
+
+or set a custom Hugging Face endpoint:
+
+```shell
+export HF_ENDPOINT=https://hf-mirror.com
+python3 scripts/download_hf_models.py --models codebert unixcoder llama3.2
+```
+
 For gated repositories such as Llama / CodeLlama, make sure you have access permission on Hugging Face and set your token before downloading:
 
 ```shell
 export HF_TOKEN=your_huggingface_token
-python3 scripts/download_hf_models.py --models llama3.2
+python3 scripts/download_hf_models.py --mirror china --models llama3.2
 ```
 
 ### FastAPI backend for frontend integration

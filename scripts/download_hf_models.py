@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import inspect
 import os
 import sys
 from pathlib import Path
 
 from huggingface_hub import snapshot_download
+
+
+DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+COMMUNITY_MIRRORS = {
+    "china": "https://hf-mirror.com",
+}
 
 
 MODEL_SPECS = {
@@ -90,6 +97,17 @@ def parse_args() -> argparse.Namespace:
         help="Force re-download even if the target folder already exists.",
     )
     parser.add_argument(
+        "--mirror",
+        choices=sorted(COMMUNITY_MIRRORS.keys()) + ["official"],
+        default=None,
+        help="Select a download endpoint shortcut. Use 'china' for the community mirror or 'official' for huggingface.co.",
+    )
+    parser.add_argument(
+        "--hf-endpoint",
+        default=None,
+        help="Custom Hugging Face endpoint. Overrides --mirror and defaults to HF_ENDPOINT if set.",
+    )
+    parser.add_argument(
         "--resume-download",
         action="store_true",
         help="Deprecated compatibility flag. Downloads now resume automatically when possible.",
@@ -112,6 +130,16 @@ def ensure_not_empty_dir(path: Path) -> bool:
     return path.exists() and any(path.iterdir())
 
 
+def resolve_hf_endpoint(args: argparse.Namespace) -> str:
+    if args.hf_endpoint:
+        return args.hf_endpoint.rstrip("/")
+    if args.mirror == "official":
+        return DEFAULT_HF_ENDPOINT
+    if args.mirror:
+        return COMMUNITY_MIRRORS[args.mirror]
+    return (os.getenv("HF_ENDPOINT") or DEFAULT_HF_ENDPOINT).rstrip("/")
+
+
 def print_supported_models() -> None:
     print("Supported model aliases:")
     for alias, spec in MODEL_SPECS.items():
@@ -127,10 +155,18 @@ def main() -> int:
 
     selected_models = resolve_selected_models(args.models)
     output_dir = Path(args.output_dir).resolve()
+    hf_endpoint = resolve_hf_endpoint(args)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Download directory: {output_dir}")
     print(f"Selected models: {', '.join(selected_models)}")
+    print(f"Hugging Face endpoint: {hf_endpoint}")
+
+    if hf_endpoint != DEFAULT_HF_ENDPOINT:
+        print(
+            "Note: You are using a community/custom Hugging Face endpoint. "
+            "Availability for gated repositories still depends on your Hugging Face access token and repo permissions."
+        )
 
     if any(name.startswith("llama") or name == "codellama" for name in selected_models):
         print(
@@ -154,11 +190,17 @@ def main() -> int:
                 print(
                     "[note] --resume-download is no longer needed; huggingface_hub resumes automatically when possible."
                 )
+            download_kwargs = {
+                "repo_id": spec["repo_id"],
+                "local_dir": str(local_path),
+                "token": args.token,
+                "force_download": args.force,
+            }
+            if "endpoint" in inspect.signature(snapshot_download).parameters:
+                download_kwargs["endpoint"] = hf_endpoint
+
             snapshot_download(
-                repo_id=spec["repo_id"],
-                local_dir=str(local_path),
-                token=args.token,
-                force_download=args.force,
+                **download_kwargs,
             )
             print(f"[done] {name}")
         except Exception as exc:
