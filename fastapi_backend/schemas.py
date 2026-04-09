@@ -22,6 +22,7 @@ class ImbalanceClassicalJobRequest(BaseModel):
     action: ClassicalAction
     dataset_name: str = Field(..., min_length=1)
     model_name: str = Field(..., min_length=1)
+    length: str = Field(..., min_length=1)
     pos_ratio: str = Field(..., min_length=1)
     cuda: str = "0"
 

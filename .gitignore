@@ -17,3 +17,6 @@ LLM_TEST/exp.yaml
 LLM_TEST/.env
 LLM_TEST/output/*
 LLM_TEST/intermediate/*
+improve_recall/output/*
+improve_recall/output_summary/*
+model/*

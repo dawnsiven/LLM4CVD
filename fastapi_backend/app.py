@@ -104,6 +104,24 @@ def _collect_suffixes(directory: Path, prefix: str, suffix: str) -> list[str]:
     return sorted(values)
 
 
+def _collect_imbalance_parts(directory: Path) -> tuple[list[str], list[str]]:
+    lengths = set()
+    ratios = set()
+    if not directory.exists():
+        return [], []
+
+    prefix = f"{directory.parent.parent.name}_"
+    suffix = "_train.json"
+    for item in _collect_suffixes(directory, prefix, suffix):
+        parts = item.rsplit("_", 1)
+        if len(parts) != 2:
+            continue
+        length, ratio = parts
+        lengths.add(length)
+        ratios.add(ratio)
+    return sorted(lengths), sorted(ratios)
+
+
 def _stringify_params(payload: dict[str, object]) -> dict[str, str]:
     return {key: str(value) for key, value in payload.items() if value is not None}
 
@@ -202,6 +220,7 @@ def get_options() -> dict[str, object]:
         "llm_models": sorted(LLM_MODELS),
         "datasets": datasets,
         "regular_lengths": [],
+        "imbalance_lengths": [],
         "imbalance_ratios": [],
     }
 
@@ -217,13 +236,14 @@ def get_options() -> dict[str, object]:
             }
         )
     if imbalance_dirs:
-        options["imbalance_ratios"] = sorted(
-            {
-                item
-                for directory in imbalance_dirs
-                for item in _collect_suffixes(directory, f"{directory.parent.parent.name}_", "_train.json")
-            }
-        )
+        imbalance_lengths = set()
+        imbalance_ratios = set()
+        for directory in imbalance_dirs:
+            lengths, ratios = _collect_imbalance_parts(directory)
+            imbalance_lengths.update(lengths)
+            imbalance_ratios.update(ratios)
+        options["imbalance_lengths"] = sorted(imbalance_lengths)
+        options["imbalance_ratios"] = sorted(imbalance_ratios)
 
     return options
 
@@ -255,12 +275,12 @@ def create_imbalance_classical_job(payload: ImbalanceClassicalJobRequest) -> Job
     if payload.model_name not in GRAPH_MODELS:
         raise HTTPException(status_code=400, detail="Unsupported classical model.")
     script_name = "train_imbalance.sh" if payload.action == "train" else "test_imbalance.sh"
-    output_dir = REPO_ROOT / "outputs" / f"{payload.model_name}_imbalance" / f"{payload.dataset_name}_1_{payload.pos_ratio}"
-    log_path = output_dir / f"{payload.action}_{payload.model_name}_{payload.dataset_name}_1_{payload.pos_ratio}.log"
+    output_dir = REPO_ROOT / "outputs" / f"{payload.model_name}_imbalance" / f"{payload.dataset_name}_{payload.length}_{payload.pos_ratio}"
+    log_path = output_dir / f"{payload.action}_{payload.model_name}_{payload.dataset_name}_{payload.length}_{payload.pos_ratio}.log"
     return _launch_job(
         job_type="classical_imbalance",
         script_name=script_name,
-        args=[payload.dataset_name, payload.model_name, payload.pos_ratio, payload.cuda],
+        args=[payload.dataset_name, payload.model_name, payload.length, payload.pos_ratio, payload.cuda],
         output_dir=output_dir,
         log_file=log_path,
         result_csv=output_dir / "results.csv",

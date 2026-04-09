@@ -130,6 +130,7 @@ ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:3000 ./scripts/run_fastap
 - `datasets.regular`
 - `datasets.imbalance`
 - `regular_lengths`
+- `imbalance_lengths`
 - `imbalance_ratios`
 
 请求示例：
@@ -260,6 +261,7 @@ curl -X POST http://127.0.0.1:8000/api/jobs/classical \
   "action": "train",
   "dataset_name": "draper",
   "model_name": "CodeBERT",
+  "length": "1",
   "pos_ratio": "0.2",
   "cuda": "0"
 }
@@ -270,6 +272,7 @@ curl -X POST http://127.0.0.1:8000/api/jobs/classical \
 - `action`: `train` 或 `test`
 - `dataset_name`: 数据集名
 - `model_name`: 传统模型名
+- `length`: 长度区间
 - `pos_ratio`: 正样本比例
 - `cuda`: GPU 编号
 

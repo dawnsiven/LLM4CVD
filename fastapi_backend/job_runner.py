@@ -6,7 +6,7 @@ import sqlite3
 import subprocess
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -63,9 +63,23 @@ class JobRecord:
     process: Optional[subprocess.Popen] = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict:
-        payload = asdict(self)
-        payload.pop("process", None)
-        return payload
+        return {
+            "job_id": self.job_id,
+            "job_type": self.job_type,
+            "script_name": self.script_name,
+            "command": list(self.command),
+            "params": dict(self.params),
+            "output_dir": self.output_dir,
+            "log_file": self.log_file,
+            "result_csv": self.result_csv,
+            "status": self.status,
+            "pid": self.pid,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "return_code": self.return_code,
+            "error_message": self.error_message,
+        }
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "JobRecord":
@@ -281,8 +295,9 @@ class JobManager:
             return params
 
         if job_type == "classical_imbalance":
-            dataset_name, pos_ratio = dirname.rsplit("_1_", 1)
+            dataset_name, length, pos_ratio = dirname.rsplit("_", 2)
             params["dataset_name"] = dataset_name
+            params["length"] = length
             params["pos_ratio"] = pos_ratio
             return params
 
