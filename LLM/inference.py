@@ -93,18 +93,30 @@ def main():
             prompt = PROMPT_DICT["prompt_no_input"].format_map(ann)
         else:
             prompt = PROMPT_DICT["prompt_input"].format_map(ann)
-
-        model_input = tokenizer(prompt, return_tensors="pt").to(device)
+        model_input = tokenizer(
+            prompt,
+            return_tensors="pt",
+            padding=True,
+            truncation=True
+        ).to(device)
 
         print("*" * 50, i, "*" * 50, flush=True)
         print("Length: ", model_input['input_ids'].size(1))
         with torch.no_grad():
+            # generation_output = model.generate(
+            #     input_ids=model_input['input_ids'],
+            #     return_dict_in_generate=True,
+            #     output_scores=True,
+            #     max_new_tokens=8,
+            #     # do_sample=False
+            # )
             generation_output = model.generate(
                 input_ids=model_input['input_ids'],
+                attention_mask=model_input['attention_mask'], 
+                pad_token_id=tokenizer.pad_token_id,     
                 return_dict_in_generate=True,
                 output_scores=True,
                 max_new_tokens=8,
-                # do_sample=False
             )
             logits = generation_output.scores
             probabilities = [torch.softmax(logit, dim=-1) for logit in logits]
