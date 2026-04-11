@@ -110,6 +110,10 @@ def compute_llm_only_metrics(llm_rows: List[dict]) -> Dict[str, float]:
     return metrics
 
 
+def has_valid_llm_prediction(row: dict) -> bool:
+    return str(row.get("LLMPrediction", "")).strip() in {"0", "1"}
+
+
 def main() -> None:
     args = parse_args()
     load_env_file(args.env_file)
@@ -140,7 +144,8 @@ def main() -> None:
     reviewed_original_preds: List[int] = []
     reviewed_final_preds: List[int] = []
 
-    llm_override_count = 0
+    llm_applied_count = 0
+    llm_changed_count = 0
     llm_missing_count = 0
     actual_positive_total = 0
     actual_positive_reviewed_by_llm = 0
@@ -155,13 +160,16 @@ def main() -> None:
 
         final_pred = original_pred
         llm_row = llm_by_index.get(index)
+        llm_has_valid_prediction = bool(llm_row) and has_valid_llm_prediction(llm_row)
 
         if original_pred == 1:
             reviewed_labels.append(label)
             reviewed_original_preds.append(original_pred)
-            if llm_row and str(llm_row.get("LLMPrediction", "")).strip() in {"0", "1"}:
+            if llm_has_valid_prediction:
                 final_pred = to_int(llm_row.get("LLMPrediction"))
-                llm_override_count += 1
+                llm_applied_count += 1
+                if final_pred != original_pred:
+                    llm_changed_count += 1
             else:
                 llm_missing_count += 1
             reviewed_final_preds.append(final_pred)
@@ -191,13 +199,16 @@ def main() -> None:
             llm_model = "" if not llm_row else llm_row.get("LLMModel", "")
 
             if original_pred == 1:
-                actual_positive_reviewed_by_llm += 1
-                if final_pred == 1:
-                    positive_case_status = "true_positive_kept_by_llm"
-                    actual_positive_kept_by_llm += 1
+                if llm_has_valid_prediction:
+                    actual_positive_reviewed_by_llm += 1
+                    if final_pred == 1:
+                        positive_case_status = "true_positive_kept_by_llm"
+                        actual_positive_kept_by_llm += 1
+                    else:
+                        positive_case_status = "true_positive_rejected_by_llm"
+                        actual_positive_rejected_by_llm += 1
                 else:
-                    positive_case_status = "true_positive_rejected_by_llm"
-                    actual_positive_rejected_by_llm += 1
+                    positive_case_status = "true_positive_not_reviewed_by_llm"
             else:
                 positive_case_status = "missed_by_original_model"
                 actual_positive_missed_by_original += 1
@@ -290,9 +301,14 @@ def main() -> None:
                     "original_metrics": "computed on all test cases",
                     "final_metrics": "computed on all test cases",
                     "reviewed_subset_original_metrics": "computed only on samples with OriginalPrediction == 1",
-                    "reviewed_subset_final_metrics": "computed only on samples with OriginalPrediction == 1",
+                    "reviewed_subset_final_metrics": (
+                        "computed only on samples with OriginalPrediction == 1; "
+                        "samples without a valid LLM prediction keep their original prediction"
+                    ),
                 },
-                "llm_override_count": llm_override_count,
+                "llm_applied_count": llm_applied_count,
+                "llm_changed_count": llm_changed_count,
+                "llm_override_count": llm_changed_count,
                 "llm_missing_count": llm_missing_count,
                 "original_metrics": original_metrics,
                 "final_metrics": merged_metrics,

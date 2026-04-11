@@ -29,6 +29,29 @@ def parse_args() -> argparse.Namespace:
         default="LLM_TEST/intermediate",
         help="Root directory for intermediate outputs.",
     )
+    parser.add_argument(
+        "--output_subdir",
+        default=None,
+        help="Custom output subdirectory name under output_root. Defaults to the inferred dataset_id.",
+    )
+    parser.add_argument(
+        "--prediction_value",
+        type=int,
+        default=1,
+        help="Only keep rows whose Prediction equals this value. Defaults to 1.",
+    )
+    parser.add_argument(
+        "--min_prob",
+        type=float,
+        default=None,
+        help="Optional inclusive lower bound for Prob filtering.",
+    )
+    parser.add_argument(
+        "--max_prob",
+        type=float,
+        default=None,
+        help="Optional inclusive upper bound for Prob filtering.",
+    )
     return parser.parse_args()
 
 
@@ -49,6 +72,23 @@ def infer_data_json(results_csv: Path, data_root: Path) -> Path:
             + ", ".join(str(path) for path in candidates)
         )
     return candidates[0]
+
+
+def resolve_data_json_path(
+    cli_data_json: Optional[str],
+    config_data_json: Optional[str],
+    results_csv: Path,
+    data_root: Path,
+) -> Path:
+    if cli_data_json:
+        return Path(cli_data_json).resolve()
+
+    try:
+        return infer_data_json(results_csv, data_root)
+    except (FileNotFoundError, FileExistsError):
+        if config_data_json:
+            return Path(config_data_json).resolve()
+        raise
 
 
 def load_results(results_csv: Path) -> List[dict]:
@@ -78,6 +118,13 @@ def to_int(value: object, default: int = 0) -> int:
         return default
 
 
+def to_float(value: object, default: Optional[float] = None) -> Optional[float]:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def safe_write_json(path: Path, payload: object) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
@@ -93,27 +140,46 @@ def main() -> None:
     results_csv = Path(resolve_value(args.results_csv, extract_cfg, "results_csv")).resolve()
     data_root = Path(resolve_value(args.data_root, common_cfg, "data_root", "data")).resolve()
     output_root = resolve_value(args.output_root, common_cfg, "intermediate_root", "LLM_TEST/intermediate")
-    data_json_value = resolve_value(args.data_json, extract_cfg, "data_json")
-    data_json = Path(data_json_value).resolve() if data_json_value else infer_data_json(results_csv, data_root)
+    config_data_json = extract_cfg.get("data_json")
+    data_json = resolve_data_json_path(
+        cli_data_json=args.data_json,
+        config_data_json=config_data_json,
+        results_csv=results_csv,
+        data_root=data_root,
+    )
 
     dataset_id = infer_dataset_id(results_csv)
-    output_dir = Path(output_root).resolve() / dataset_id
+    output_subdir = args.output_subdir or dataset_id
+    output_dir = Path(output_root).resolve() / output_subdir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     result_rows = load_results(results_csv)
     data_rows = load_json(data_json)
     data_by_index = build_index_map(data_rows)
 
-    positive_rows = [row for row in result_rows if to_int(row.get("Prediction")) == 1]
+    positive_rows = [row for row in result_rows if to_int(row.get("Prediction")) == args.prediction_value]
+    filtered_rows: List[dict] = []
+    for row in positive_rows:
+        prob = to_float(row.get("Prob"))
+        if args.min_prob is not None and (prob is None or prob < args.min_prob):
+            continue
+        if args.max_prob is not None and (prob is None or prob > args.max_prob):
+            continue
+        filtered_rows.append(row)
 
     matched_samples: List[dict] = []
     unmatched_indices: List[int] = []
     positive_indices: List[int] = []
 
-    for row in positive_rows:
+    for row in filtered_rows:
         sample_index = to_int(row.get("Index"))
         positive_indices.append(sample_index)
         sample = data_by_index.get(sample_index)
+        matched_by = "record_index"
+        if sample is None and 0 <= sample_index < len(data_rows):
+            # Some results.csv files use row position rather than the original sample["index"].
+            sample = data_rows[sample_index]
+            matched_by = "row_position"
         if sample is None:
             unmatched_indices.append(sample_index)
             continue
@@ -122,6 +188,8 @@ def main() -> None:
             {
                 "dataset_id": dataset_id,
                 "index": sample_index,
+                "sample_index": sample.get("index"),
+                "matched_by": matched_by,
                 "cwe": row.get("CWE", sample.get("cwe", "null")),
                 "ground_truth": to_int(row.get("Label"), default=to_int(sample.get("output"), default=0)),
                 "original_prediction": to_int(row.get("Prediction")),
@@ -137,12 +205,17 @@ def main() -> None:
         output_dir / "summary.json",
         {
             "dataset_id": dataset_id,
+            "output_subdir": output_subdir,
             "results_csv": str(results_csv),
             "data_json": str(data_json),
             "total_results": len(result_rows),
             "positive_predictions": len(positive_rows),
+            "filtered_predictions": len(filtered_rows),
             "matched_positive_samples": len(matched_samples),
             "unmatched_positive_indices": len(unmatched_indices),
+            "prediction_value": args.prediction_value,
+            "min_prob": args.min_prob,
+            "max_prob": args.max_prob,
         },
     )
     safe_write_json(output_dir / "positive_indices.json", positive_indices)
@@ -153,6 +226,7 @@ def main() -> None:
     print(f"results_csv={results_csv}")
     print(f"data_json={data_json}")
     print(f"positive_predictions={len(positive_rows)}")
+    print(f"filtered_predictions={len(filtered_rows)}")
     print(f"matched_positive_samples={len(matched_samples)}")
     print(f"output_dir={output_dir}")
 

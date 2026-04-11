@@ -154,7 +154,7 @@ To quickly get started, you can run the following examples:
 # For the experiments on Section 6.4.
 ./scripts/finetune_imbalance.sh   draper  llama3.1  0·2         0;
 ./scripts/inference_imbalance.sh  draper  llama3.1  0·2         0;
-./scripts/train_imbalance.sh      draper  CodeBERT  0·2         0;
+./scripts/train_imbalance.sh bigvul CodeBERT 0-512 1 0;
 ./scripts/test_imbalance.sh       draper  CodeBERT  0·2         0;
 # For the experiments on Section 6.5.
 ./scripts/finetune_ablation.sh    reveal  llama3.1  8 16        0;

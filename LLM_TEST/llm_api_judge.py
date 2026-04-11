@@ -100,8 +100,27 @@ def extract_text_from_response(payload: dict) -> str:
 
     first = choices[0]
     message = first.get("message", {})
-    if isinstance(message, dict) and message.get("content"):
-        return str(message["content"]).strip()
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    if isinstance(item.get("text"), str) and item["text"].strip():
+                        text_parts.append(item["text"].strip())
+                    elif item.get("type") == "text" and isinstance(item.get("content"), str):
+                        if item["content"].strip():
+                            text_parts.append(item["content"].strip())
+                elif isinstance(item, str) and item.strip():
+                    text_parts.append(item.strip())
+            if text_parts:
+                return "\n".join(text_parts)
+
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content.strip():
+            return reasoning_content.strip()
 
     text = first.get("text")
     return str(text).strip() if text is not None else ""
@@ -137,10 +156,20 @@ def parse_binary_label(text: str) -> Tuple[Optional[int], Optional[str]]:
         return 1, "regex.vulnerable"
     if re.search(r'"vulnerable"\s*:\s*"?(no|false|0)"?', lowered):
         return 0, "regex.vulnerable"
-    if re.search(r"\byes\b", lowered):
-        return 1, "regex.yes"
-    if re.search(r"\bno\b", lowered):
-        return 0, "regex.no"
+
+    stripped = text.strip()
+    if re.fullmatch(r"(?i)yes|true|1", stripped):
+        return 1, "exact.yes"
+    if re.fullmatch(r"(?i)no|false|0", stripped):
+        return 0, "exact.no"
+
+    non_empty_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if non_empty_lines:
+        last_line = non_empty_lines[-1]
+        if re.fullmatch(r"(?i)yes|true|1", last_line):
+            return 1, "last_line.yes"
+        if re.fullmatch(r"(?i)no|false|0", last_line):
+            return 0, "last_line.no"
     return None, None
 
 
@@ -198,6 +227,18 @@ def call_chat_completion(
         if error_body:
             detail = f"{detail}: {error_body}"
         raise ValueError(detail) from exc
+
+
+def summarize_error(exc: Exception, response_text: str) -> str:
+    detail = str(exc).strip()
+    if response_text.strip():
+        compact_response = re.sub(r"\s+", " ", response_text).strip()
+        if len(compact_response) > 200:
+            compact_response = compact_response[:200] + "..."
+        if detail:
+            return f"{detail} | response={compact_response}"
+        return f"response={compact_response}"
+    return detail or type(exc).__name__
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -274,6 +315,15 @@ def main() -> None:
 
     input_json = Path(input_json_value).resolve()
     prompt_file = Path(prompt_file_value).resolve()
+    if not input_json.exists():
+        raise FileNotFoundError(
+            "Input JSON not found: "
+            f"{input_json}. "
+            "Run LLM_TEST/extract_positive_samples.py first, or fix INPUT_JSON / --input_json."
+        )
+    if not prompt_file.exists():
+        raise FileNotFoundError(f"Prompt file not found: {prompt_file}")
+
     positive_samples = load_json(input_json)
     prompt_template = ensure_text(prompt_file)
     if args.limit is not None:
@@ -320,7 +370,7 @@ def main() -> None:
                     raise ValueError("Could not parse vulnerable=yes/no from model response.")
                 break
             except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-                last_error = str(exc)
+                last_error = summarize_error(exc, response_text)
                 should_retry = is_retryable_exception(exc)
                 if attempt == retries or not should_retry:
                     response_text = response_text or last_error or ""
@@ -357,6 +407,8 @@ def main() -> None:
             f"index={sample['index']} label={sample['ground_truth']} "
             f"original={sample['original_prediction']} llm={llm_prediction} status={parse_status}"
         )
+        if parse_status.startswith("error:"):
+            print(f"error_detail={response_text}")
         if args.fail_fast_on_error and parse_status.startswith("error:"):
             raise RuntimeError(
                 f"Fail-fast triggered at index={sample['index']} with status={parse_status}: "
@@ -364,9 +416,11 @@ def main() -> None:
             )
         time.sleep(sleep_seconds)
 
-    write_json(output_dir / "llm_judgments.json", judgment_rows)
-    write_jsonl(output_dir / "llm_judgments.jsonl", judgment_rows)
-    write_csv(output_dir / "llm_predictions.csv", csv_rows)
+        # Persist progress incrementally so partial runs still leave inspectable artifacts.
+        write_json(output_dir / "llm_judgments.json", judgment_rows)
+        write_jsonl(output_dir / "llm_judgments.jsonl", judgment_rows)
+        write_csv(output_dir / "llm_predictions.csv", csv_rows)
+
     write_json(
         output_dir / "llm_summary.json",
         {
