@@ -3,6 +3,9 @@
 这个目录提供了一个面向前端的 FastAPI 后端，用来把仓库原本的 `scripts/*.sh` 能力暴露成 HTTP 接口。  
 后端本身不直接重写训练逻辑，而是继续调用现有脚本，例如 `train.sh`、`test.sh`、`finetune.sh`、`inference.sh` 等。
 
+除了训练和推理接口，现在也包含了 `LLM_TEST/` 复审工作流的接口封装。  
+`LLM_TEST` 的专门接口说明见：[LLM_TEST/API_README.md](/home/zjr123/LLM4CVD-main/LLM_TEST/API_README.md)。
+
 ## 目录说明
 
 - `app.py`: FastAPI 入口，定义所有路由

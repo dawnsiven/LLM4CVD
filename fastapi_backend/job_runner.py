@@ -61,6 +61,7 @@ class JobRecord:
     return_code: Optional[int] = None
     error_message: Optional[str] = None
     process: Optional[subprocess.Popen] = field(default=None, repr=False, compare=False)
+    log_handle: Optional[object] = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict:
         return {
@@ -392,6 +393,7 @@ class JobManager:
         output_dir: Optional[Path] = None,
         log_file: Optional[Path] = None,
         result_csv: Optional[Path] = None,
+        working_dir: Optional[Path] = None,
     ) -> JobRecord:
         job_id = uuid.uuid4().hex
         record = JobRecord(
@@ -409,15 +411,23 @@ class JobManager:
             self._jobs[job_id] = record
         self._persist_record(record)
 
+        log_handle = None
         try:
+            if output_dir:
+                output_dir.mkdir(parents=True, exist_ok=True)
+            if log_file:
+                log_file.parent.mkdir(parents=True, exist_ok=True)
+                log_handle = open(log_file, "ab")
             process = subprocess.Popen(
                 command,
-                cwd=REPO_ROOT,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                cwd=working_dir or REPO_ROOT,
+                stdout=log_handle if log_handle is not None else subprocess.DEVNULL,
+                stderr=log_handle if log_handle is not None else subprocess.DEVNULL,
                 start_new_session=True,
             )
         except OSError as exc:
+            if log_handle is not None:
+                log_handle.close()
             record.status = "failed"
             record.error_message = str(exc)
             record.finished_at = _utcnow()
@@ -425,6 +435,7 @@ class JobManager:
             return record
 
         record.process = process
+        record.log_handle = log_handle
         record.pid = process.pid
         record.status = "running"
         record.started_at = _utcnow()
@@ -449,6 +460,9 @@ class JobManager:
             current.pid = None
             if current.status != "stopped":
                 current.status = "completed" if return_code == 0 else "failed"
+            if current.log_handle is not None:
+                current.log_handle.close()
+                current.log_handle = None
             self._persist_record(current)
 
     def list_jobs(self) -> list[JobRecord]:
@@ -485,6 +499,9 @@ class JobManager:
             current.finished_at = _utcnow()
             current.return_code = current.process.poll() if current.process else current.return_code
             current.pid = None
+            if current.log_handle is not None:
+                current.log_handle.close()
+                current.log_handle = None
             self._persist_record(current)
             return current
 
@@ -503,6 +520,9 @@ class JobManager:
                 current.finished_at = current.finished_at or _utcnow()
                 current.status = "completed" if return_code == 0 else "failed"
                 current.pid = None
+                if current.log_handle is not None:
+                    current.log_handle.close()
+                    current.log_handle = None
                 self._persist_record(current)
             return
 

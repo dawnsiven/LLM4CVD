@@ -6,6 +6,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -65,6 +66,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--sleep_seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of concurrent API requests. Defaults to 1 (serial).",
+    )
     parser.add_argument(
         "--fail_fast_on_error",
         action="store_true",
@@ -282,6 +289,98 @@ def build_output_name(
     return dataset_id
 
 
+def build_judgment_row(
+    sample: dict,
+    model: str,
+    prompt_file: Path,
+    llm_prediction: Optional[int],
+    parse_status: str,
+    response_text: str,
+) -> dict:
+    return {
+        "dataset_id": "",
+        "index": sample["index"],
+        "label": sample["ground_truth"],
+        "original_prediction": sample["original_prediction"],
+        "llm_prediction": llm_prediction,
+        "model": model,
+        "parse_status": parse_status,
+        "prompt_file": str(prompt_file),
+        "raw_response": response_text,
+    }
+
+
+def build_csv_row(sample: dict, model: str, llm_prediction: Optional[int], parse_status: str, response_text: str) -> dict:
+    return {
+        "Index": sample["index"],
+        "Label": sample["ground_truth"],
+        "OriginalPrediction": sample["original_prediction"],
+        "LLMPrediction": "" if llm_prediction is None else llm_prediction,
+        "LLMModel": model,
+        "ParseStatus": parse_status,
+        "RawResponse": response_text,
+    }
+
+
+def process_sample(
+    sample: dict,
+    *,
+    api_base: str,
+    api_key: str,
+    model: str,
+    prompt_template: str,
+    prompt_file: Path,
+    temperature: float,
+    max_tokens: int,
+    timeout: int,
+    retries: int,
+    sleep_seconds: float,
+) -> Tuple[dict, dict]:
+    user_prompt = build_user_prompt(prompt_template, sample.get("input", ""))
+
+    response_text = ""
+    parse_status = "unparsed"
+    llm_prediction: Optional[int] = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            payload = call_chat_completion(
+                api_base=api_base,
+                api_key=api_key,
+                model=model,
+                user_prompt=user_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            response_text = extract_text_from_response(payload)
+            llm_prediction, parse_source = parse_binary_label(response_text)
+            parse_status = parse_source or "unparsed"
+            if llm_prediction is None:
+                raise ValueError("Could not parse vulnerable=yes/no from model response.")
+            break
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+            last_error = summarize_error(exc, response_text)
+            should_retry = is_retryable_exception(exc)
+            if attempt == retries or not should_retry:
+                response_text = response_text or last_error or ""
+                parse_status = f"error:{type(exc).__name__}"
+                llm_prediction = None
+            else:
+                time.sleep(sleep_seconds)
+
+    judgment = build_judgment_row(
+        sample=sample,
+        model=model,
+        prompt_file=prompt_file,
+        llm_prediction=llm_prediction,
+        parse_status=parse_status,
+        response_text=response_text,
+    )
+    csv_row = build_csv_row(sample, model, llm_prediction, parse_status, response_text)
+    return judgment, csv_row
+
+
 def main() -> None:
     args = parse_args()
     load_env_file(args.env_file)
@@ -341,85 +440,95 @@ def main() -> None:
     output_dir = Path(output_root).resolve() / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    judgment_rows: List[dict] = []
-    csv_rows: List[dict] = []
+    if args.workers <= 0:
+        raise ValueError("--workers must be a positive integer.")
 
-    for sample in positive_samples:
-        user_prompt = build_user_prompt(prompt_template, sample.get("input", ""))
+    judgments_by_order: List[Optional[dict]] = [None] * len(positive_samples)
+    csv_by_order: List[Optional[dict]] = [None] * len(positive_samples)
 
-        response_text = ""
-        parse_status = "unparsed"
-        llm_prediction: Optional[int] = None
-        last_error = None
+    if args.workers == 1:
+        for order, sample in enumerate(positive_samples):
+            judgment, csv_row = process_sample(
+                sample,
+                api_base=api_base,
+                api_key=api_key,
+                model=model,
+                prompt_template=prompt_template,
+                prompt_file=prompt_file,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                retries=retries,
+                sleep_seconds=sleep_seconds,
+            )
+            judgment["dataset_id"] = dataset_id
+            judgments_by_order[order] = judgment
+            csv_by_order[order] = csv_row
 
-        for attempt in range(1, retries + 1):
-            try:
-                payload = call_chat_completion(
+            print(
+                f"index={sample['index']} label={sample['ground_truth']} "
+                f"original={sample['original_prediction']} llm={judgment['llm_prediction']} "
+                f"status={judgment['parse_status']}"
+            )
+            if judgment["parse_status"].startswith("error:"):
+                print(f"error_detail={judgment['raw_response']}")
+            if args.fail_fast_on_error and judgment["parse_status"].startswith("error:"):
+                raise RuntimeError(
+                    f"Fail-fast triggered at index={sample['index']} with status={judgment['parse_status']}: "
+                    f"{judgment['raw_response']}"
+                )
+
+            write_json(output_dir / "llm_judgments.json", [row for row in judgments_by_order if row is not None])
+            write_jsonl(output_dir / "llm_judgments.jsonl", [row for row in judgments_by_order if row is not None])
+            write_csv(output_dir / "llm_predictions.csv", [row for row in csv_by_order if row is not None])
+    else:
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            future_to_order = {
+                executor.submit(
+                    process_sample,
+                    sample,
                     api_base=api_base,
                     api_key=api_key,
                     model=model,
-                    user_prompt=user_prompt,
+                    prompt_template=prompt_template,
+                    prompt_file=prompt_file,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     timeout=timeout,
-                )
-                response_text = extract_text_from_response(payload)
-                llm_prediction, parse_source = parse_binary_label(response_text)
-                parse_status = parse_source or "unparsed"
-                if llm_prediction is None:
-                    raise ValueError("Could not parse vulnerable=yes/no from model response.")
-                break
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-                last_error = summarize_error(exc, response_text)
-                should_retry = is_retryable_exception(exc)
-                if attempt == retries or not should_retry:
-                    response_text = response_text or last_error or ""
-                    parse_status = f"error:{type(exc).__name__}"
-                    llm_prediction = None
-                else:
-                    time.sleep(sleep_seconds)
-
-        judgment = {
-            "dataset_id": dataset_id,
-            "index": sample["index"],
-            "label": sample["ground_truth"],
-            "original_prediction": sample["original_prediction"],
-            "llm_prediction": llm_prediction,
-            "model": model,
-            "parse_status": parse_status,
-            "prompt_file": str(prompt_file),
-            "raw_response": response_text,
-        }
-        judgment_rows.append(judgment)
-        csv_rows.append(
-            {
-                "Index": sample["index"],
-                "Label": sample["ground_truth"],
-                "OriginalPrediction": sample["original_prediction"],
-                "LLMPrediction": "" if llm_prediction is None else llm_prediction,
-                "LLMModel": model,
-                "ParseStatus": parse_status,
-                "RawResponse": response_text,
+                    retries=retries,
+                    sleep_seconds=sleep_seconds,
+                ): (order, sample)
+                for order, sample in enumerate(positive_samples)
             }
-        )
 
-        print(
-            f"index={sample['index']} label={sample['ground_truth']} "
-            f"original={sample['original_prediction']} llm={llm_prediction} status={parse_status}"
-        )
-        if parse_status.startswith("error:"):
-            print(f"error_detail={response_text}")
-        if args.fail_fast_on_error and parse_status.startswith("error:"):
-            raise RuntimeError(
-                f"Fail-fast triggered at index={sample['index']} with status={parse_status}: "
-                f"{response_text}"
-            )
-        time.sleep(sleep_seconds)
+            for future in as_completed(future_to_order):
+                order, sample = future_to_order[future]
+                judgment, csv_row = future.result()
+                judgment["dataset_id"] = dataset_id
+                judgments_by_order[order] = judgment
+                csv_by_order[order] = csv_row
 
-        # Persist progress incrementally so partial runs still leave inspectable artifacts.
-        write_json(output_dir / "llm_judgments.json", judgment_rows)
-        write_jsonl(output_dir / "llm_judgments.jsonl", judgment_rows)
-        write_csv(output_dir / "llm_predictions.csv", csv_rows)
+                print(
+                    f"index={sample['index']} label={sample['ground_truth']} "
+                    f"original={sample['original_prediction']} llm={judgment['llm_prediction']} "
+                    f"status={judgment['parse_status']}"
+                )
+                if judgment["parse_status"].startswith("error:"):
+                    print(f"error_detail={judgment['raw_response']}")
+                if args.fail_fast_on_error and judgment["parse_status"].startswith("error:"):
+                    raise RuntimeError(
+                        f"Fail-fast triggered at index={sample['index']} with status={judgment['parse_status']}: "
+                        f"{judgment['raw_response']}"
+                    )
+
+                completed_judgments = [row for row in judgments_by_order if row is not None]
+                completed_csv_rows = [row for row in csv_by_order if row is not None]
+                write_json(output_dir / "llm_judgments.json", completed_judgments)
+                write_jsonl(output_dir / "llm_judgments.jsonl", completed_judgments)
+                write_csv(output_dir / "llm_predictions.csv", completed_csv_rows)
+
+    judgment_rows = [row for row in judgments_by_order if row is not None]
+    csv_rows = [row for row in csv_by_order if row is not None]
 
     write_json(
         output_dir / "llm_summary.json",

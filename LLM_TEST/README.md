@@ -1,5 +1,7 @@
 # LLM_TEST 使用说明
 
+如果你要通过 FastAPI 调用这一部分的能力，而不是直接跑脚本，可以看单独的接口文档：[API_README.md](/home/zjr123/LLM4CVD-main/LLM_TEST/API_README.md)。
+
 `LLM_TEST/` 是一个围绕“小模型预测结果复审”的独立工作区，核心流程是：
 
 `extract_positive_samples.py` -> `llm_api_judge.py` / `llm_local_judge.py` -> `recompute_metrics.py`

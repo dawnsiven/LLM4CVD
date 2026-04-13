@@ -141,6 +141,7 @@ run_auto_mode() {
     local result_model=""
     local dataset_id=""
     local prob_range=""
+    local workers="1"
     local data_json_override=""
     local prompt_file_override=""
     local output_root_override=""
@@ -161,6 +162,10 @@ run_auto_mode() {
                 ;;
             --limit)
                 limit="$2"
+                shift 2
+                ;;
+            --workers)
+                workers="$2"
                 shift 2
                 ;;
             --config)
@@ -291,6 +296,7 @@ EOF
     echo "result_model=${result_model}"
     echo "dataset=${dataset_id}"
     echo "prob_range=${min_prob}-${max_prob}"
+    echo "workers=${workers}"
     echo "results_csv=${results_csv}"
     echo "input_json=${input_json_path}"
     echo "llm_output_dir=${metrics_output_dir}"
@@ -321,6 +327,7 @@ EOF
             --prompt_file "${prompt_file_path}" \
             --output_root "${output_root_path}" \
             --output_name "${output_tag}" \
+            --workers "${workers}" \
             --limit "${limit}"
     else
         python3 LLM_TEST/llm_api_judge.py \
@@ -329,7 +336,8 @@ EOF
             --input_json "${input_json_path}" \
             --prompt_file "${prompt_file_path}" \
             --output_root "${output_root_path}" \
-            --output_name "${output_tag}"
+            --output_name "${output_tag}" \
+            --workers "${workers}"
     fi
 
     python3 LLM_TEST/recompute_metrics.py \
