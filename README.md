@@ -155,6 +155,7 @@ To quickly get started, you can run the following examples:
 ./scripts/finetune_imbalance.sh   draper  llama3.1  0·2         0;
 ./scripts/inference_imbalance.sh  draper  llama3.1  0·2         0;
 ./scripts/train_imbalance.sh bigvul CodeBERT 0-512 1 0;
+./scripts/train_imbalance_test.sh bigvul_cwe20 CodeBERT 1 1 0;
 ./scripts/test_imbalance.sh       draper  CodeBERT  0·2         0;
 # For the experiments on Section 6.5.
 ./scripts/finetune_ablation.sh    reveal  llama3.1  8 16        0;
@@ -168,6 +169,96 @@ To quickly get started, you can run the following examples:
 
 You can modify the command-line arguments in the above examples to perform other experiments mentioned in the paper.
 For the ablation scripts, the arguments are `<DATASET_NAME> <MODEL_NAME> <R> <ALPHA> [CUDA]`.
+
+### Reviewer fine-tuning workflow
+
+If you want to fine-tune an LLM reviewer on top of the positive predictions made by a small model, you can use the following two-step workflow.
+
+1. Generate reviewer CSV files from an existing small-model checkpoint directory under `outputs/<RESULT_MODEL>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>/`:
+
+```shell
+./scripts/test_imbalance_test.sh bigvul_cwe20 CodeBERT 1 1 0
+```
+
+This script reuses the existing checkpoint in `outputs/CodeBERT_imbalance/bigvul_cwe20_1_1/` and generates:
+
+- `reviewer_train.csv`
+- `reviewer_val.csv`
+- `reviewer_test.csv`
+- `results.csv` (compatibility copy of `reviewer_test.csv`)
+
+2. Prepare reviewer JSON files and rebucket them by token length:
+
+```shell
+./data_process/rebucket_reviewer_data.sh bigvul_cwe20 CodeBERT 1 1 0
+```
+
+This script will:
+
+- read `outputs/CodeBERT_imbalance/bigvul_cwe20_1_1/reviewer_train.csv`
+- read `outputs/CodeBERT_imbalance/bigvul_cwe20_1_1/reviewer_val.csv`
+- read `outputs/CodeBERT_imbalance/bigvul_cwe20_1_1/reviewer_test.csv`
+- generate reviewer JSON files under `reviewer_finetune_data/`
+- rebucket reviewer JSON files by token length
+
+3. Start LoRA fine-tuning from an already prepared bucket:
+
+```shell
+./scripts/finetune_test.sh bigvul_cwe20 CodeBERT llama3.2 1 1 4 0
+```
+
+The arguments are:
+
+- `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> <BATCH_SIZE> [LENGTH_BUCKET] [CUDA]`
+
+For the example above, the script will:
+
+- read the already prepared rebucketed reviewer JSON files
+- launch `LLM/finetuning_test.py` using the rebucketed train/val JSON files
+
+The generated JSON files follow the naming rule:
+
+- `reviewer_finetune_data/CodeBERT_imbalance/bigvul_cwe20_1_1/train.json`
+- `reviewer_finetune_data/CodeBERT_imbalance/bigvul_cwe20_1_1/val.json`
+- `reviewer_finetune_data/CodeBERT_imbalance/bigvul_cwe20_1_1/test.json`
+
+After rebucketing, the script uses files under:
+
+- `reviewer_finetune_data/CodeBERT_imbalance/bigvul_cwe20_1_1_length_rebucketed/`
+
+For example:
+
+- `train_0-512.json`
+- `val_0-512.json`
+- `test_0-512.json`
+
+Each reviewer JSON sample keeps the following fields:
+
+```json
+{
+  "instruction": "The small model predicts that the following code contains a vulnerability. Determine whether this prediction should be kept or rejected.",
+  "input": "Small model confidence: 0.78\n\nCode:\n...",
+  "prob": 0.78,
+  "output": "0",
+  "index": 103840
+}
+```
+
+Notes:
+
+- reviewer fine-tuning currently keeps only the samples with `Prediction = 1` from the small-model CSV
+- `output = "1"` means `keep`
+- `output = "0"` means `reject`
+- `prob` is stored in the JSON and is also injected into the prompt as a standalone line before the code
+- `finetuning_test.py` reads the prepared JSON files directly; it no longer needs to build training samples from CSV on the fly
+- the default length bucket is `0-512`
+- if you want to specify a bucket explicitly, for example `512-1024`, use:
+
+```shell
+./scripts/finetune_test.sh bigvul_cwe20 CodeBERT llama3.2 1 1 4 512-1024 0
+```
+
+- if the 7th argument is a plain value like `0`, the script treats it as `CUDA`, and `LENGTH_BUCKET` falls back to `0-512`
 
 Specifically, the second parameter represents the dataset name, which corresponds to the folder name in the `data/` directory.
 You can customize a new dataset (assume it is named `xxx`) by following the template of our open-sourced dataset on the HuggingFace repository. Store it according to the following file structure:

@@ -85,6 +85,8 @@ cp LLM_TEST/.env.example LLM_TEST/.env
 
 - `llm_api_judge.py`
   调用 OpenAI 兼容接口复审。
+- `llm_api_judge_with_examples.py`
+  调用 OpenAI 兼容接口复审，并给每个待判断样本注入一个“相似历史误判案例”。
 - `llm_local_judge.py`
   用本地 Hugging Face 模型复审。
 - `Prompt/`
@@ -212,6 +214,19 @@ python3 LLM_TEST/llm_api_judge.py \
   --config LLM_TEST/exp.yaml \
   --env_file LLM_TEST/.env \
   --limit 100 \
+  --output_by_prompt_version
+```
+
+如果你想用 `LLM_TEST/Prompt/CWE-20_1.txt` 这种“目标代码 + 相似历史案例”提示词，可以运行：
+
+```bash
+python3 LLM_TEST/llm_api_judge_with_examples.py \
+  --config LLM_TEST/exp.yaml \
+  --env_file LLM_TEST/.env \
+  --input_json LLM_TEST/intermediate/bigvul_cwe20_1_1_UniXcoder_imbalance_positive_0_1/positive_samples.json \
+  --prompt_file LLM_TEST/Prompt/CWE-20_1.txt \
+  --example_records_json error_similarity_analysis/cwe20_bundle/bigvul_cwe20_1_1/codebert_errors.json \
+  --example_similarity_csv error_similarity_analysis/cwe20_bundle/bigvul_cwe20_1_1/similarity/codebert_errors_mean_top10.csv \
   --output_by_prompt_version
 ```
 
