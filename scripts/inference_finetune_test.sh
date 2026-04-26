@@ -1,19 +1,35 @@
 #!/bin/bash
-DATASET_NAME=$1
-RESULT_MODEL_NAME=$2
-MODEL_NAME=$3
-LENGTH=$4
-POS_RATIO=$5
-LENGTH_BUCKET=${6:-"0-512"}
-REQUESTED_CHECKPOINT=${7:-""}
-CUDA=${8:-"0"}
+set -euo pipefail
+
+DATASET_NAME=${1:-}
+RESULT_MODEL_NAME=${2:-}
+MODEL_NAME=${3:-}
+LENGTH=${4:-}
+POS_RATIO=""
+LENGTH_BUCKET="0-512"
+REQUESTED_CHECKPOINT=""
+CUDA="0"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 # Check if the required parameters are provided
-if [ $# -lt 5 ]; then
-    echo "Usage: $0 <DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> [LENGTH_BUCKET] [EPOCH|epoch-N] [CUDA]"
+if [ $# -lt 4 ]; then
+    echo "Usage (imbalance): $0 <DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> [LENGTH_BUCKET] [EPOCH|epoch-N] [CUDA]"
+    echo "Usage (non-imbalance): $0 <DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> [LENGTH_BUCKET] [EPOCH|epoch-N] [CUDA]"
     exit 1
+fi
+
+if [ $# -ge 5 ]; then
+    if [[ "$5" =~ ^[0-9]+$ ]] || [[ "$5" == *-* ]]; then
+        LENGTH_BUCKET="$5"
+        REQUESTED_CHECKPOINT=${6:-""}
+        CUDA=${7:-"0"}
+    else
+        POS_RATIO="$5"
+        LENGTH_BUCKET=${6:-"0-512"}
+        REQUESTED_CHECKPOINT=${7:-""}
+        CUDA=${8:-"0"}
+    fi
 fi
 
 if [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then
@@ -34,7 +50,12 @@ if [[ -z "${MODEL_MAP[$MODEL_NAME]}" ]]; then
     exit 1
 fi
 
-if [[ $# -eq 7 && "${REQUESTED_CHECKPOINT}" =~ ^[0-9]+$ ]]; then
+if [[ -z "${POS_RATIO}" && $# -eq 6 && "${REQUESTED_CHECKPOINT}" =~ ^[0-9]+$ ]]; then
+    CUDA="${REQUESTED_CHECKPOINT}"
+    REQUESTED_CHECKPOINT=""
+fi
+
+if [[ -n "${POS_RATIO}" && $# -eq 7 && "${REQUESTED_CHECKPOINT}" =~ ^[0-9]+$ ]]; then
     CUDA="${REQUESTED_CHECKPOINT}"
     REQUESTED_CHECKPOINT=""
 fi
@@ -44,12 +65,20 @@ if [[ -n "${REQUESTED_CHECKPOINT}" && "${REQUESTED_CHECKPOINT}" =~ ^[0-9]+$ ]]; 
 fi
 
 REVIEWER_DATA_DIR="reviewer_finetune_data"
-DATASET_TAG="${DATASET_NAME}_${LENGTH}_${POS_RATIO}"
-REBUCKETED_DATA_SUBDIR="${REVIEWER_DATA_DIR}/${RESULT_MODEL_NAME}_imbalance/${DATASET_TAG}_length_rebucketed"
+DATASET_TAG="${DATASET_NAME}_${LENGTH}"
+REBUCKETED_DATA_SUBDIR="${REVIEWER_DATA_DIR}/${RESULT_MODEL_NAME}/${DATASET_TAG}_length_rebucketed"
+OUTPUT_STEM="${RESULT_MODEL_NAME}_${DATASET_TAG}_${LENGTH_BUCKET}"
+
+if [[ -n "${POS_RATIO}" ]]; then
+    DATASET_TAG="${DATASET_NAME}_${LENGTH}_${POS_RATIO}"
+    REBUCKETED_DATA_SUBDIR="${REVIEWER_DATA_DIR}/${RESULT_MODEL_NAME}_imbalance/${DATASET_TAG}_length_rebucketed"
+    OUTPUT_STEM="${RESULT_MODEL_NAME}_imbalance_${DATASET_TAG}_${LENGTH_BUCKET}"
+fi
+
 TEST_JSON="${REBUCKETED_DATA_SUBDIR}/test_${LENGTH_BUCKET}.json"
-OUTPUT_DIR="outputs/${MODEL_NAME}_lora/${RESULT_MODEL_NAME}_imbalance_${DATASET_TAG}_${LENGTH_BUCKET}/"
+OUTPUT_DIR="outputs/${MODEL_NAME}_lora/${OUTPUT_STEM}/"
 CSV_PATH="${OUTPUT_DIR}/results.csv"
-LOG_PATH="${OUTPUT_DIR}/inference_${MODEL_NAME}_lora_${RESULT_MODEL_NAME}_imbalance_${DATASET_TAG}_${LENGTH_BUCKET}.log"
+LOG_PATH="${OUTPUT_DIR}/inference_${MODEL_NAME}_lora_${OUTPUT_STEM}.log"
 
 find_latest_checkpoint() {
     local output_dir="$1"
@@ -100,7 +129,16 @@ resolve_output_dir() {
     fi
 
     shopt -s nullglob
-    for candidate_dir in "${search_root}"/"${RESULT_MODEL_NAME}"_imbalance_*_"${LENGTH_BUCKET}"; do
+    local patterns=()
+    if [[ -n "${POS_RATIO}" ]]; then
+        patterns+=("${search_root}/${RESULT_MODEL_NAME}_imbalance_*_${LENGTH_BUCKET}")
+    else
+        patterns+=("${search_root}/${RESULT_MODEL_NAME}_*_${LENGTH_BUCKET}")
+    fi
+
+    shopt -s nullglob
+    for candidate_pattern in "${patterns[@]}"; do
+        for candidate_dir in ${candidate_pattern}; do
         if [[ ! -d "${candidate_dir}" ]]; then
             continue
         fi
@@ -123,6 +161,7 @@ resolve_output_dir() {
             matched_epoch=${epoch_suffix}
             matched_dir="${candidate_dir}"
         fi
+        done
     done
     shopt -u nullglob
 
@@ -144,7 +183,12 @@ resolve_requested_checkpoint() {
 if [[ ! -f "${TEST_JSON}" ]]; then
     echo "Rebucketed reviewer test JSON is missing: ${TEST_JSON}"
     echo "Please prepare it first with:"
-    echo "  ./data_process/rebucket_reviewer_data.sh ${DATASET_NAME} ${RESULT_MODEL_NAME} ${LENGTH} ${POS_RATIO}"
+    if [[ -n "${POS_RATIO}" ]]; then
+        echo "  ./data_process/rebucket_reviewer_data.sh ${DATASET_NAME} ${RESULT_MODEL_NAME} ${LENGTH} ${POS_RATIO}"
+        echo "  ./data_process/rebucket_reviewer_data_oof_train.sh ${DATASET_NAME} ${RESULT_MODEL_NAME} ${LENGTH} ${POS_RATIO}"
+    else
+        echo "  ./data_process/rebucket_reviewer_data_oof_train.sh ${DATASET_NAME} ${RESULT_MODEL_NAME} ${LENGTH}"
+    fi
     exit 1
 fi
 
@@ -164,7 +208,7 @@ fi
 
 OUTPUT_DIR="${RESOLVED_OUTPUT_DIR}"
 CSV_PATH="${OUTPUT_DIR}/results.csv"
-LOG_PATH="${OUTPUT_DIR}/inference_${MODEL_NAME}_lora_${RESULT_MODEL_NAME}_imbalance_${DATASET_TAG}_${LENGTH_BUCKET}.log"
+LOG_PATH="${OUTPUT_DIR}/inference_${MODEL_NAME}_lora_${OUTPUT_STEM}.log"
 
 CHECKPOINT_DIR=$(find_latest_checkpoint "${OUTPUT_DIR}")
 if [[ -n "${REQUESTED_CHECKPOINT}" ]]; then
@@ -185,7 +229,11 @@ mkdir -p "${OUTPUT_DIR}"
 
 echo "Reviewer result model: ${RESULT_MODEL_NAME}"
 echo "Length: ${LENGTH}"
-echo "POS_RATIO: ${POS_RATIO}"
+if [[ -n "${POS_RATIO}" ]]; then
+    echo "POS_RATIO: ${POS_RATIO}"
+else
+    echo "POS_RATIO: <non-imbalance mode>"
+fi
 echo "Length bucket: ${LENGTH_BUCKET}"
 if [[ -n "${REQUESTED_CHECKPOINT}" ]]; then
     echo "Requested checkpoint: ${REQUESTED_CHECKPOINT}"

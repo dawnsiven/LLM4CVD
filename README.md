@@ -387,17 +387,30 @@ Important directories:
 Use [`scripts/finetune_test.sh`](scripts/finetune_test.sh):
 
 ```shell
+# Imbalance workflow:
 ./scripts/finetune_test.sh bigvul_cwe20 CodeBERT llama3.2 1 1 4 0-512 0
+
+# Non-imbalance workflow:
+./scripts/finetune_test.sh cvefixes_cwe352 CodeBERT llama3.2 0-512 4 0-512 0
 ```
 
 Arguments:
 
-- `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> <BATCH_SIZE> [LENGTH_BUCKET] [CUDA]`
+- imbalance datasets:
+  `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> <BATCH_SIZE> [LENGTH_BUCKET] [CUDA]`
+- non-imbalance datasets:
+  `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <BATCH_SIZE> [LENGTH_BUCKET] [CUDA]`
 
 This script reads:
 
-- `reviewer_finetune_data/<RESULT_MODEL_NAME>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>_length_rebucketed/train_<LENGTH_BUCKET>.json`
-- `reviewer_finetune_data/<RESULT_MODEL_NAME>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>_length_rebucketed/val_<LENGTH_BUCKET>.json`
+- imbalance:
+  `reviewer_finetune_data/<RESULT_MODEL_NAME>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>_length_rebucketed/train_<LENGTH_BUCKET>.json`
+- imbalance:
+  `reviewer_finetune_data/<RESULT_MODEL_NAME>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>_length_rebucketed/val_<LENGTH_BUCKET>.json`
+- non-imbalance:
+  `reviewer_finetune_data/<RESULT_MODEL_NAME>/<DATASET>_<LENGTH>_length_rebucketed/train_<LENGTH_BUCKET>.json`
+- non-imbalance:
+  `reviewer_finetune_data/<RESULT_MODEL_NAME>/<DATASET>_<LENGTH>_length_rebucketed/val_<LENGTH_BUCKET>.json`
 
 So after Step 2, LoRA fine-tuning automatically uses:
 
@@ -409,16 +422,26 @@ So after Step 2, LoRA fine-tuning automatically uses:
 Use [`scripts/inference_finetune_test.sh`](scripts/inference_finetune_test.sh):
 
 ```shell
+# Imbalance workflow:
 ./scripts/inference_finetune_test.sh bigvul_cwe20 CodeBERT llama3.2 1 1 0-512 0
+
+# Non-imbalance workflow:
+./scripts/inference_finetune_test.sh cvefixes_cwe352 CodeBERT llama3.2 0-512 0-512 0
 ```
 
 Arguments:
 
-- `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> [LENGTH_BUCKET] [EPOCH|epoch-N] [CUDA]`
+- imbalance datasets:
+  `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> [LENGTH_BUCKET] [EPOCH|epoch-N] [CUDA]`
+- non-imbalance datasets:
+  `<DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> [LENGTH_BUCKET] [EPOCH|epoch-N] [CUDA]`
 
 This script reads:
 
-- `reviewer_finetune_data/<RESULT_MODEL_NAME>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>_length_rebucketed/test_<LENGTH_BUCKET>.json`
+- imbalance:
+  `reviewer_finetune_data/<RESULT_MODEL_NAME>_imbalance/<DATASET>_<LENGTH>_<POS_RATIO>_length_rebucketed/test_<LENGTH_BUCKET>.json`
+- non-imbalance:
+  `reviewer_finetune_data/<RESULT_MODEL_NAME>/<DATASET>_<LENGTH>_length_rebucketed/test_<LENGTH_BUCKET>.json`
 
 So after Step 2, reviewer inference automatically uses:
 
