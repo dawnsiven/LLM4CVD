@@ -76,7 +76,7 @@ CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --train_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_train.json" \
     --eval_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_validate.json" \
     --test_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_test.json" \
-    --epoch 5 \
+    --epoch 10 \
     --block_size 512 \
     --train_batch_size  4\ 
     --eval_batch_size 4 \
@@ -94,7 +94,7 @@ CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --train_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_train.json" \
     --eval_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_validate.json" \
     --test_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_test.json" \
-    --num_train_epochs 5 \
+    --num_train_epochs 10 \
     --block_size 512 \
     --train_batch_size 4 \
     --eval_batch_size 4 \
@@ -113,7 +113,7 @@ CUDA_VISIBLE_DEVICES="${CUDA}" python ${MODEL_NAME}/run.py \
     --train_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_train.json" \
     --eval_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_validate.json" \
     --test_data_file="data/${DATASET_NAME}_subsampled/alpaca/${DATASET_NAME}_${LENGTH}_${POS_RATIO}_test.json" \
-    --epoch 5 \
+    --epoch 10 \
     --block_size 512 \
     --train_batch_size 4 \
     --eval_batch_size 4 \

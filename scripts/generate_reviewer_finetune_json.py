@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument("--dataset-name", required=True, help="Dataset name, e.g. bigvul_cwe20")
     parser.add_argument("--result-model", required=True, help="Small model name, e.g. CodeBERT")
     parser.add_argument("--length", required=True, help="Length tag, e.g. 1")
-    parser.add_argument("--pos-ratio", required=True, help="Positive ratio tag, e.g. 1")
+    parser.add_argument("--pos-ratio", default="", help="Positive ratio tag, e.g. 1")
     parser.add_argument(
         "--repo-root",
         default=None,
@@ -43,7 +43,16 @@ def load_source_samples(path: Path):
     return by_index
 
 
-def resolve_results_dir(repo_root: Path, result_model: str, dataset_tag: str):
+def resolve_results_dir(repo_root: Path, result_model: str, dataset_tag: str, imbalance: bool):
+    if not imbalance:
+        primary = repo_root / "outputs" / result_model / dataset_tag
+        if primary.is_dir():
+            return primary
+        raise FileNotFoundError(
+            "Could not find reviewer CSV directory. Expected: "
+            f"{primary}"
+        )
+
     primary = repo_root / "outputs" / f"{result_model}_imbalance" / dataset_tag
     fallback = repo_root / "outputs" / f"{result_model}_imbalance_test" / dataset_tag
     if primary.is_dir():
@@ -105,10 +114,19 @@ def main():
         if args.repo_root
         else Path(__file__).resolve().parents[1]
     )
-    dataset_tag = f"{args.dataset_name}_{args.length}_{args.pos_ratio}"
-    results_dir = resolve_results_dir(repo_root, args.result_model, dataset_tag)
+    imbalance = bool(args.pos_ratio)
+    dataset_tag = (
+        f"{args.dataset_name}_{args.length}_{args.pos_ratio}"
+        if imbalance
+        else f"{args.dataset_name}_{args.length}"
+    )
+    results_dir = resolve_results_dir(repo_root, args.result_model, dataset_tag, imbalance)
 
-    dataset_dir = repo_root / "data" / f"{args.dataset_name}_subsampled" / "alpaca"
+    dataset_dir = (
+        repo_root / "data" / f"{args.dataset_name}_subsampled" / "alpaca"
+        if imbalance
+        else repo_root / "data" / args.dataset_name / "alpaca"
+    )
     source_paths = {
         "train": dataset_dir / f"{dataset_tag}_train.json",
         "val": dataset_dir / f"{dataset_tag}_validate.json",
@@ -121,7 +139,11 @@ def main():
     }
 
     output_root = (repo_root / args.output_root).resolve()
-    output_dir = output_root / f"{args.result_model}_imbalance" / dataset_tag
+    output_dir = (
+        output_root / f"{args.result_model}_imbalance" / dataset_tag
+        if imbalance
+        else output_root / args.result_model / dataset_tag
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     output_paths = {

@@ -465,7 +465,7 @@ def main(args):
     # Evaluation
     if args.do_eval and args.local_rank in [-1, 0]:
             output_path = os.path.join(args.output_dir, 'checkpoint-best-f1/model.bin')
-            model.load_state_dict(torch.load(output_path))
+            model.load_state_dict(torch.load(output_path, map_location=args.device))
             model.to(args.device)
             result=evaluate(args, model, tokenizer)
             logger.info("***** Eval results *****")
@@ -474,7 +474,7 @@ def main(args):
 
     if args.do_test and args.local_rank in [-1, 0]:
             output_path = os.path.join(args.output_dir, 'checkpoint-best-f1/model.bin')
-            model.load_state_dict(torch.load(output_path))
+            model.load_state_dict(torch.load(output_path, map_location=args.device))
             model.to(args.device)
             test(args, model, tokenizer)
 
