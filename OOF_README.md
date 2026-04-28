@@ -314,6 +314,55 @@ Compatibility note:
 - those old files are not reliable for final merge evaluation
 - for correct final merge results, rerun [`scripts/inference_finetune_test.sh`](scripts/inference_finetune_test.sh) after the index-fix update
 
+## One-Command Pipeline Wrappers
+
+If you do not want to run Step 0 through Step 4 manually, you can use the wrapper scripts below.
+
+Single-dataset wrapper:
+
+- [`scripts/run_reviewer_oof_pipeline.sh`](scripts/run_reviewer_oof_pipeline.sh)
+  runs the full OOF workflow for one dataset by chaining:
+  small-model train, reviewer CSV export, OOF generation, OOF reviewer JSON preparation,
+  reviewer LoRA fine-tuning, reviewer inference, and final merge.
+
+Examples:
+
+```shell
+# Imbalance workflow:
+./scripts/run_reviewer_oof_pipeline.sh bigvul_cwe20 CodeBERT llama3.2 1 1 4 0-512 0 myrun
+
+# Non-imbalance workflow:
+./scripts/run_reviewer_oof_pipeline.sh cvefixes_cwe352 CodeBERT llama3.2 0-512 4 0-512 0 myrun
+```
+
+Multi-dataset wrapper:
+
+- [`scripts/run_oof_full_pipeline.sh`](scripts/run_oof_full_pipeline.sh)
+  reuses `scripts/run_reviewer_oof_pipeline.sh` and executes the same full workflow
+  sequentially for multiple datasets.
+
+Usage rule:
+
+- pass one dataset name, or multiple dataset names separated by commas, as the first argument
+- all remaining arguments are forwarded unchanged to
+  `scripts/run_reviewer_oof_pipeline.sh`
+- this is useful when several datasets share the same
+  `RESULT_MODEL_NAME`, `LLM_MODEL_NAME`, `LENGTH`, `POS_RATIO`, `BATCH_SIZE`,
+  `LENGTH_BUCKET`, `CUDA`, and `OOF_RUN_TAG`
+
+Examples:
+
+```shell
+# One dataset:
+./scripts/run_oof_full_pipeline.sh cvefixes_cwe352 CodeBERT llama3.2 0-512 4
+
+# Multiple non-imbalance datasets:
+./scripts/run_oof_full_pipeline.sh cvefixes_cwe352,cvefixes_cwe79 CodeBERT llama3.2 0-512 4
+
+# Multiple imbalance datasets:
+./scripts/run_oof_full_pipeline.sh bigvul_cwe20,bigvul_cwe79 CodeBERT llama3.2 1 1 4 0-512 0 batch_run
+```
+
 ## Related Scripts
 
 - [`scripts/train_imbalance_test.sh`](scripts/train_imbalance_test.sh)
@@ -340,3 +389,9 @@ Compatibility note:
 - [`scripts/merge_reviewer_lora_results.py`](scripts/merge_reviewer_lora_results.py)
   Merge reviewer LoRA test results back into the original small-model `results.csv`
   and compute final merged metrics.
+
+- [`scripts/run_reviewer_oof_pipeline.sh`](scripts/run_reviewer_oof_pipeline.sh)
+  Run the full OOF reviewer pipeline for a single dataset.
+
+- [`scripts/run_oof_full_pipeline.sh`](scripts/run_oof_full_pipeline.sh)
+  Run the same full OOF reviewer pipeline sequentially for one or more datasets.
