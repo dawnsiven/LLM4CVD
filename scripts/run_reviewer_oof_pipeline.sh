@@ -83,6 +83,8 @@ if [[ -z "${OOF_RUN_TAG}" ]]; then
 fi
 
 OOF_REVIEWER_TRAIN_CSV="${OOF_OUTPUT_ROOT}/${OOF_RUN_TAG}/reviewer_train.csv"
+OOF_SUMMARY_JSON="${OOF_OUTPUT_ROOT}/${OOF_RUN_TAG}/oof_summary.json"
+OOF_OUTPUT_DIR="${OOF_OUTPUT_ROOT}/${OOF_RUN_TAG}"
 
 echo "Dataset: ${DATASET_NAME}"
 echo "Result model: ${RESULT_MODEL_NAME}"
@@ -109,7 +111,7 @@ reviewer_csvs_exist() {
 }
 
 oof_exists() {
-    [[ -f "${OOF_REVIEWER_TRAIN_CSV}" ]]
+    [[ -f "${OOF_REVIEWER_TRAIN_CSV}" ]] && [[ -f "${OOF_SUMMARY_JSON}" ]]
 }
 
 rebucketed_data_exists() {
@@ -158,6 +160,19 @@ run_oof() {
     if oof_exists && [[ "${FORCE_OOF}" != "1" ]]; then
         echo "[Skip] OOF reviewer_train.csv already exists: ${OOF_REVIEWER_TRAIN_CSV}"
         return
+    fi
+
+    if [[ -d "${OOF_OUTPUT_DIR}" ]] && [[ -n "$(find "${OOF_OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]] && [[ "${FORCE_OOF}" != "1" ]]; then
+        echo "[Stop] OOF output directory already exists but is incomplete:"
+        echo "  ${OOF_OUTPUT_DIR}"
+        echo "Missing required files:"
+        [[ -f "${OOF_REVIEWER_TRAIN_CSV}" ]] || echo "  ${OOF_REVIEWER_TRAIN_CSV}"
+        [[ -f "${OOF_SUMMARY_JSON}" ]] || echo "  ${OOF_SUMMARY_JSON}"
+        echo "Use one of the following options:"
+        echo "  1. set a different OOF_RUN_TAG"
+        echo "  2. remove the incomplete directory"
+        echo "  3. rerun with FORCE_OOF=1 after cleanup"
+        exit 1
     fi
 
     echo "[Run] Generate OOF reviewer_train.csv"

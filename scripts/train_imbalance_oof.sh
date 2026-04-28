@@ -72,6 +72,8 @@ fi
 
 OUTPUT_DIR="${OUTPUT_ROOT}/${DATASET_TAG}/${OOF_RUN_TAG}"
 WORK_DIR="${OUTPUT_DIR}/oof_work"
+OUTPUT_CSV="${OUTPUT_DIR}/reviewer_train.csv"
+SUMMARY_JSON="${OUTPUT_DIR}/oof_summary.json"
 
 if [[ ! -f "${ORIGINAL_TRAIN_DATA_FILE}" ]]; then
     echo "Missing train JSON: ${ORIGINAL_TRAIN_DATA_FILE}"
@@ -83,10 +85,20 @@ if [[ ! -f "${ORIGINAL_EVAL_DATA_FILE}" ]]; then
     exit 1
 fi
 
+if [[ -f "${OUTPUT_CSV}" && -f "${SUMMARY_JSON}" ]]; then
+    echo "OOF outputs already exist, skipping regeneration:"
+    echo "  ${OUTPUT_CSV}"
+    echo "  ${SUMMARY_JSON}"
+    exit 0
+fi
+
 if [[ -e "${OUTPUT_DIR}" ]] && [[ -n "$(find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
-    echo "Output directory already exists and is not empty:"
+    echo "Output directory already exists but is incomplete:"
     echo "  ${OUTPUT_DIR}"
-    echo "Please set a different OOF_RUN_TAG or remove the old directory first."
+    echo "Missing required files:"
+    [[ -f "${OUTPUT_CSV}" ]] || echo "  ${OUTPUT_CSV}"
+    [[ -f "${SUMMARY_JSON}" ]] || echo "  ${SUMMARY_JSON}"
+    echo "Please set a different OOF_RUN_TAG or remove the incomplete directory first."
     exit 1
 fi
 
@@ -324,7 +336,7 @@ for (( fold_id=0; fold_id<OOF_FOLDS; fold_id++ )); do
     run_fold "${fold_id}"
 done
 
-"${PYTHON_BIN}" - "${WORK_DIR}" "${OUTPUT_DIR}/reviewer_train.csv" "${OUTPUT_DIR}/oof_summary.json" <<'PY'
+"${PYTHON_BIN}" - "${WORK_DIR}" "${OUTPUT_CSV}" "${SUMMARY_JSON}" <<'PY'
 import csv
 import json
 import sys
@@ -405,6 +417,6 @@ summary_json.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n"
 PY
 
 echo "OOF reviewer train CSV written to:"
-echo "  ${OUTPUT_DIR}/reviewer_train.csv"
+echo "  ${OUTPUT_CSV}"
 echo "Summary written to:"
-echo "  ${OUTPUT_DIR}/oof_summary.json"
+echo "  ${SUMMARY_JSON}"
