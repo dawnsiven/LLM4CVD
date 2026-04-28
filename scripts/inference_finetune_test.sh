@@ -19,16 +19,22 @@ if [ $# -lt 4 ]; then
     exit 1
 fi
 
+# Parsing rules:
+# - non-imbalance:
+#   $5 = optional LENGTH_BUCKET (usually contains '-')
+# - imbalance:
+#   $5 = POS_RATIO (numeric)
+#   $6 = optional LENGTH_BUCKET
 if [ $# -ge 5 ]; then
-    if [[ "$5" =~ ^[0-9]+$ ]] || [[ "$5" == *-* ]]; then
-        LENGTH_BUCKET="$5"
-        REQUESTED_CHECKPOINT=${6:-""}
-        CUDA=${7:-"0"}
-    else
+    if [[ "$5" =~ ^[0-9]+$ ]]; then
         POS_RATIO="$5"
         LENGTH_BUCKET=${6:-"0-512"}
         REQUESTED_CHECKPOINT=${7:-""}
         CUDA=${8:-"0"}
+    else
+        LENGTH_BUCKET="$5"
+        REQUESTED_CHECKPOINT=${6:-""}
+        CUDA=${7:-"0"}
     fi
 fi
 
@@ -68,17 +74,20 @@ REVIEWER_DATA_DIR="reviewer_finetune_data"
 DATASET_TAG="${DATASET_NAME}_${LENGTH}"
 REBUCKETED_DATA_SUBDIR="${REVIEWER_DATA_DIR}/${RESULT_MODEL_NAME}/${DATASET_TAG}_length_rebucketed"
 OUTPUT_STEM="${RESULT_MODEL_NAME}_${DATASET_TAG}_${LENGTH_BUCKET}"
+ORIGINAL_RESULTS_DIR="outputs/${RESULT_MODEL_NAME}/${DATASET_TAG}"
 
 if [[ -n "${POS_RATIO}" ]]; then
     DATASET_TAG="${DATASET_NAME}_${LENGTH}_${POS_RATIO}"
     REBUCKETED_DATA_SUBDIR="${REVIEWER_DATA_DIR}/${RESULT_MODEL_NAME}_imbalance/${DATASET_TAG}_length_rebucketed"
     OUTPUT_STEM="${RESULT_MODEL_NAME}_imbalance_${DATASET_TAG}_${LENGTH_BUCKET}"
+    ORIGINAL_RESULTS_DIR="outputs/${RESULT_MODEL_NAME}_imbalance/${DATASET_TAG}"
 fi
 
 TEST_JSON="${REBUCKETED_DATA_SUBDIR}/test_${LENGTH_BUCKET}.json"
 OUTPUT_DIR="outputs/${MODEL_NAME}_lora/${OUTPUT_STEM}/"
 CSV_PATH="${OUTPUT_DIR}/results.csv"
 LOG_PATH="${OUTPUT_DIR}/inference_${MODEL_NAME}_lora_${OUTPUT_STEM}.log"
+ORIGINAL_RESULTS_CSV="${ORIGINAL_RESULTS_DIR}/results.csv"
 
 find_latest_checkpoint() {
     local output_dir="$1"
@@ -247,3 +256,14 @@ TOKENIZERS_PARALLELISM=false CUDA_VISIBLE_DEVICES="${CUDA}" python LLM/inference
     --data_file "${TEST_JSON}" \
     --csv_path "${CSV_PATH}" \
     >"${LOG_PATH}"
+
+if [[ -f "${ORIGINAL_RESULTS_CSV}" ]]; then
+    echo "Merging reviewer results back into original small-model results..."
+    python3 scripts/merge_reviewer_lora_results.py \
+        --original_results_csv "${ORIGINAL_RESULTS_CSV}" \
+        --reviewer_results_csv "${CSV_PATH}" \
+        --output_dir "${OUTPUT_DIR}"
+else
+    echo "Original small-model results.csv not found, skipping merge:"
+    echo "  ${ORIGINAL_RESULTS_CSV}"
+fi

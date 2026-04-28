@@ -19,19 +19,23 @@ if [ $# -lt 5 ]; then
     exit 1
 fi
 
-if [[ "$5" =~ ^[0-9]+$ ]]; then
-    BATCH_SIZE="$5"
-    LENGTH_BUCKET=${6:-"0-512"}
-    CUDA=${7:-"0"}
-else
-    if [ $# -lt 6 ]; then
-        echo "Usage (imbalance): $0 <DATASET_NAME> <RESULT_MODEL_NAME> <LLM_MODEL_NAME> <LENGTH> <POS_RATIO> <BATCH_SIZE> [LENGTH_BUCKET] [CUDA]"
-        exit 1
-    fi
+# Parsing rules:
+# - non-imbalance:
+#   $5 = BATCH_SIZE (numeric)
+#   $6 = optional LENGTH_BUCKET (usually contains '-')
+# - imbalance:
+#   $5 = POS_RATIO (numeric)
+#   $6 = BATCH_SIZE (numeric)
+# We distinguish them mainly by whether $6 is numeric.
+if [ $# -ge 6 ] && [[ "$5" =~ ^[0-9]+$ ]] && [[ "$6" =~ ^[0-9]+$ ]]; then
     POS_RATIO="$5"
     BATCH_SIZE="$6"
     LENGTH_BUCKET=${7:-"0-512"}
     CUDA=${8:-"0"}
+else
+    BATCH_SIZE="$5"
+    LENGTH_BUCKET=${6:-"0-512"}
+    CUDA=${7:-"0"}
 fi
 
 if [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then

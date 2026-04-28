@@ -142,7 +142,8 @@ def main():
             print("Label: {} - Response: {}".format(expected_response,prediction_result))
 
             code = example_content.get("input", "")
-            temp_df = pd.DataFrame({'Index': i, 'Code': [code], 'Label': [expected_response], 'Prediction': [prediction_result],
+            row_index = example_content.get("index", i)
+            temp_df = pd.DataFrame({'Index': row_index, 'Code': [code], 'Label': [expected_response], 'Prediction': [prediction_result],
                                     'Prob': [confidence_score.item()], 'Response': [response]})
             temp_df.to_csv(args.csv_path, index=False, mode='w' if i == 0 else 'a', header=i == 0)
 
