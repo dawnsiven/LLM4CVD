@@ -73,6 +73,19 @@ def find_bucket(length, bucket_specs):
     raise ValueError(f"Unable to bucket sample length {length}")
 
 
+def bucket_spec_to_dict(bucket_specs):
+    items = []
+    for bucket_name, lower, upper in bucket_specs:
+        items.append(
+            {
+                "name": bucket_name,
+                "lower_inclusive": lower,
+                "upper_exclusive": upper,
+            }
+        )
+    return items
+
+
 def main():
     args = parse_args()
     input_dir = Path(args.input_dir).resolve()
@@ -100,6 +113,15 @@ def main():
     print(f"Input directory: {input_dir}")
     print(f"Output directory: {output_dir}")
 
+    summary = {
+        "tokenizer_path": str(tokenizer_path),
+        "input_dir": str(input_dir),
+        "output_dir": str(output_dir),
+        "bucket_boundaries": list(args.bucket_boundaries),
+        "bucket_specs": bucket_spec_to_dict(bucket_specs),
+        "splits": {},
+    }
+
     for split_name, path in split_files.items():
         if not path.is_file():
             raise FileNotFoundError(f"Missing split file: {path}")
@@ -120,10 +142,28 @@ def main():
         print(f"\nSplit: {split_name}")
         print(f"  total: {len(rows)}")
         print(f"  max: {max_item}")
+        split_summary = {
+            "source_file": str(path),
+            "total": len(rows),
+            "max": {
+                "index": None if max_item is None else max_item[0],
+                "token_length": None if max_item is None else max_item[1],
+            },
+            "buckets": {},
+        }
         for bucket_name, _, _ in bucket_specs:
             output_path = output_dir / f"{split_name}_{bucket_name}.json"
             save_json(output_path, bucketed[bucket_name])
             print(f"  {bucket_name}: {len(bucketed[bucket_name])} -> {output_path}")
+            split_summary["buckets"][bucket_name] = {
+                "count": len(bucketed[bucket_name]),
+                "output_file": str(output_path),
+            }
+        summary["splits"][split_name] = split_summary
+
+    summary_path = output_dir / "rebucket_summary.json"
+    save_json(summary_path, summary)
+    print(f"\nSummary saved to: {summary_path}")
 
 
 if __name__ == "__main__":
