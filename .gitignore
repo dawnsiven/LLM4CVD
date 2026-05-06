@@ -7,6 +7,7 @@ joern/*
 *.log
 .vscode
 outputs
+analysis
 outputs_1
 error_similarity_analysis/*
 !error_similarity_analysis/

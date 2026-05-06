@@ -170,6 +170,50 @@ To quickly get started, you can run the following examples:
 You can modify the command-line arguments in the above examples to perform other experiments mentioned in the paper.
 For the ablation scripts, the arguments are `<DATASET_NAME> <MODEL_NAME> <R> <ALPHA> [CUDA]`.
 
+### Rebucket alpaca data by token length
+
+If you already have split Alpaca-format JSON files and want to rebucket them by token length in place, you can use:
+
+```shell
+venv/bin/python data_process/rebucket_alpaca_by_length.py \
+  --dataset-dir data/cvefixes_cwe77 \
+  --dataset-name cvefixes_cwe77 \
+  --input-prefix cvefixes_cwe77_0-512
+```
+
+This script will:
+
+- rename the original `alpaca/` directory to `alpaca1/`
+- create a new empty `alpaca/` directory
+- read `*_train.json`, `*_validate.json`, and `*_test.json` from `alpaca1/`
+- compute token length from each sample's `input` field using `model/Llama-3.2-1B`
+- write rebucketed files back into the new `alpaca/` directory
+- save files with the naming rule `数据集名称_长度_train|validate|test.json`
+- append a `token_length` field to each output sample
+- delete `alpaca1/` after successful completion
+
+For the example above, the generated files are placed under:
+
+- `data/cvefixes_cwe77/alpaca/`
+
+The output naming rule is:
+
+- `<dataset_name>_0-512_train.json`
+- `<dataset_name>_512-1024_train.json`
+- `<dataset_name>_1024-*_train.json`
+- the same pattern is used for `validate` and `test`
+
+You can also customize the bucket boundaries or process only selected splits:
+
+```shell
+venv/bin/python data_process/rebucket_alpaca_by_length.py \
+  --dataset-dir data/cvefixes_cwe77 \
+  --dataset-name cvefixes_cwe77 \
+  --input-prefix cvefixes_cwe77_0-512 \
+  --bucket-boundaries 256 512 1024 \
+  --splits train validate
+```
+
 ### Reviewer fine-tuning workflow
 
 If you want to fine-tune an LLM reviewer on top of the positive predictions made by a small model, you can use the following two-step workflow.
