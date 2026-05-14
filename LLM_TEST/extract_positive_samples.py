@@ -98,7 +98,33 @@ def load_results(results_csv: Path) -> List[dict]:
 
 def load_json(data_json: Path) -> List[dict]:
     with data_json.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+        text = handle.read().strip()
+
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        rows: List[dict] = []
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                rows.append(json.loads(stripped))
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Unsupported JSON format in {data_json} at line {line_no}. "
+                    "Expected a JSON array/object or JSONL with one JSON object per line."
+                ) from exc
+        return rows
+
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        return [payload]
+    raise ValueError(f"Unsupported JSON root type in {data_json}: {type(payload).__name__}")
 
 
 def build_index_map(records: List[dict]) -> Dict[int, dict]:
@@ -125,9 +151,20 @@ def to_float(value: object, default: Optional[float] = None) -> Optional[float]:
         return default
 
 
+def get_probability(row: dict) -> Optional[float]:
+    # Some result CSVs use "Prob" while others use lowercase "prob".
+    return to_float(row.get("Prob", row.get("prob")))
+
+
 def safe_write_json(path: Path, payload: object) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def safe_write_jsonl(path: Path, rows: List[dict]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def main() -> None:
@@ -160,7 +197,7 @@ def main() -> None:
     positive_rows = [row for row in result_rows if to_int(row.get("Prediction")) == args.prediction_value]
     filtered_rows: List[dict] = []
     for row in positive_rows:
-        prob = to_float(row.get("Prob"))
+        prob = get_probability(row)
         if args.min_prob is not None and (prob is None or prob < args.min_prob):
             continue
         if args.max_prob is not None and (prob is None or prob > args.max_prob):
@@ -193,7 +230,7 @@ def main() -> None:
                 "cwe": row.get("CWE", sample.get("cwe", "null")),
                 "ground_truth": to_int(row.get("Label"), default=to_int(sample.get("output"), default=0)),
                 "original_prediction": to_int(row.get("Prediction")),
-                "original_probability": row.get("Prob"),
+                "original_probability": get_probability(row),
                 "instruction": sample.get("instruction", ""),
                 "input": sample.get("input", ""),
                 "output": sample.get("output", ""),
@@ -220,7 +257,7 @@ def main() -> None:
     )
     safe_write_json(output_dir / "positive_indices.json", positive_indices)
     safe_write_json(output_dir / "unmatched_indices.json", unmatched_indices)
-    safe_write_json(output_dir / "positive_samples.json", matched_samples)
+    safe_write_jsonl(output_dir / "positive_samples.jsonl", matched_samples)
 
     print(f"dataset_id={dataset_id}")
     print(f"results_csv={results_csv}")

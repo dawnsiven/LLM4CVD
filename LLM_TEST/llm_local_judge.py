@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input_json",
         default=None,
-        help="Path to LLM_TEST/intermediate/<dataset_id>/positive_samples.json",
+        help="Path to LLM_TEST/intermediate/<dataset_id>/positive_samples.jsonl",
     )
     parser.add_argument(
         "--prompt_file",
@@ -92,6 +92,8 @@ def parse_args() -> argparse.Namespace:
 
 def load_json(path: Path) -> List[dict]:
     with path.open("r", encoding="utf-8") as handle:
+        if path.suffix == ".jsonl":
+            return [json.loads(line) for line in handle if line.strip()]
         return json.load(handle)
 
 
@@ -260,7 +262,6 @@ def main() -> None:
             f"original={sample['original_prediction']} llm={llm_prediction} status={parse_status}"
         )
 
-    write_json(output_dir / "llm_judgments.json", judgment_rows)
     write_jsonl(output_dir / "llm_judgments.jsonl", judgment_rows)
     write_csv(output_dir / "llm_predictions.csv", csv_rows)
     write_json(

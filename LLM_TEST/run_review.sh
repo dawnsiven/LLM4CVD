@@ -66,7 +66,7 @@ run_legacy_mode() {
     fi
 
     if [[ ! -f "${input_json_path}" && -n "${dataset_id_value}" ]]; then
-        local fallback_input_json="${intermediate_root_path%/}/${dataset_id_value}/positive_samples.json"
+        local fallback_input_json="${intermediate_root_path%/}/${dataset_id_value}/positive_samples.jsonl"
         if [[ -f "${fallback_input_json}" ]]; then
             echo "Configured INPUT_JSON was not generated."
             echo "Using extracted fallback: ${fallback_input_json}"
@@ -78,7 +78,7 @@ run_legacy_mode() {
         echo "Failed to locate input json."
         echo "configured_input_json=${INPUT_JSON:-}"
         if [[ -n "${dataset_id_value}" ]]; then
-            echo "fallback_input_json=${intermediate_root_path%/}/${dataset_id_value}/positive_samples.json"
+            echo "fallback_input_json=${intermediate_root_path%/}/${dataset_id_value}/positive_samples.jsonl"
         fi
         echo "Please check RESULTS_CSV / DATA_JSON / INPUT_JSON in ${env_path}"
         exit 1
@@ -240,7 +240,7 @@ run_auto_mode() {
     local data_json_path="${data_json_override}"
     local range_tag="${min_prob}_${max_prob}"
     local intermediate_tag="${dataset_id}_${result_model}_positive_${range_tag}"
-    local input_json_path="${intermediate_root_path%/}/${intermediate_tag}/positive_samples.json"
+    local input_json_path="${intermediate_root_path%/}/${intermediate_tag}/positive_samples.jsonl"
     local output_prompt_tag
     local output_tag
     local llm_predictions_csv

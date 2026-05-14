@@ -2,17 +2,29 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import json
+import shutil
 from pathlib import Path
 from typing import Iterable, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from fastapi_backend.code_chunking import run_code_chunking
+from fastapi_backend.code_inference import run_single_inference
 from fastapi_backend.job_runner import JobManager, REPO_ROOT
 from fastapi_backend.schemas import (
     AblationJobRequest,
     ClassicalJobRequest,
+    FrontendCodeChunkItem,
+    FrontendCodeChunkRequest,
+    FrontendCodeChunkResponse,
+    FrontendCodeChunkResult,
+    DataUploadResponse,
+    FrontendCodeInferenceRequest,
+    FrontendCodeInferenceResponse,
+    FrontendDataIngestResponse,
     FileOption,
     ImbalanceClassicalJobRequest,
     ImbalanceLLMJobRequest,
@@ -20,6 +32,8 @@ from fastapi_backend.schemas import (
     JobResponse,
     LLMTestEnsembleJobRequest,
     LLMTestExtractJobRequest,
+    LLMTestFullMetricsJobRequest,
+    LLMTestFullPrepareJobRequest,
     LLMTestJudgeJobRequest,
     LLMTestMetricsJobRequest,
     LLMTestOptionsResponse,
@@ -28,6 +42,8 @@ from fastapi_backend.schemas import (
     OutputEntry,
     OutputListResponse,
     OutputTextResponse,
+    PromptCreateRequest,
+    PromptFileResponse,
     ToGraphJobRequest,
 )
 
@@ -48,11 +64,14 @@ app.add_middleware(
 )
 
 job_manager = JobManager()
+DATA_ROOT = REPO_ROOT / "data"
 OUTPUTS_ROOT = REPO_ROOT / "outputs"
 LLM_TEST_ROOT = REPO_ROOT / "LLM_TEST"
+LLM_TEST_PROMPT_ROOT = LLM_TEST_ROOT / "Prompt"
 LLM_TEST_INTERMEDIATE_ROOT = LLM_TEST_ROOT / "intermediate"
 LLM_TEST_OUTPUT_ROOT = LLM_TEST_ROOT / "output"
 LLM_TEST_ALLOWED_ROOTS = {
+    "prompt": LLM_TEST_PROMPT_ROOT,
     "intermediate": LLM_TEST_INTERMEDIATE_ROOT,
     "output": LLM_TEST_OUTPUT_ROOT,
 }
@@ -78,11 +97,32 @@ def _tail_text(path: Path, lines: int) -> str:
 
 
 def _resolve_outputs_path(relative_path: str = "") -> Path:
-    candidate = (OUTPUTS_ROOT / relative_path).resolve()
+    normalized_relative = relative_path.strip().lstrip("/")
+    if normalized_relative == "outputs":
+        normalized_relative = ""
+    elif normalized_relative.startswith("outputs/"):
+        normalized_relative = normalized_relative[len("outputs/") :]
+
+    candidate = (OUTPUTS_ROOT / normalized_relative).resolve()
     try:
         candidate.relative_to(OUTPUTS_ROOT.resolve())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid outputs path.") from exc
+    return candidate
+
+
+def _resolve_data_path(relative_path: str = "") -> Path:
+    normalized_relative = relative_path.strip().lstrip("/")
+    if normalized_relative == "data":
+        normalized_relative = ""
+    elif normalized_relative.startswith("data/"):
+        normalized_relative = normalized_relative[len("data/") :]
+
+    candidate = (DATA_ROOT / normalized_relative).resolve()
+    try:
+        candidate.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid data path.") from exc
     return candidate
 
 
@@ -103,6 +143,105 @@ def _resolve_repo_path(path_value: str, label: str, *, allow_empty: bool = False
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"{label} must stay inside the repository.") from exc
     return candidate
+
+
+def _strip_subsampled_test_suffix(file_stem: str) -> str:
+    if not file_stem.endswith("_test"):
+        return file_stem
+    prefix = file_stem[: -len("_test")]
+    parts = prefix.split("_")
+    if len(parts) >= 3:
+        return "_".join(parts[:-1]) + "_test"
+    return file_stem
+
+
+def _resolve_full_prepare_data_json(path_value: str) -> Path:
+    candidate = _resolve_repo_path(path_value, "data_json")
+    if candidate.exists():
+        parts = candidate.relative_to(REPO_ROOT).parts
+        if len(parts) >= 4 and parts[0] == "data" and parts[1].endswith("_subsampled") and parts[-1].endswith("_test.json"):
+            base_dataset = parts[1][: -len("_subsampled")]
+            normalized_name = _strip_subsampled_test_suffix(candidate.stem) + candidate.suffix
+            fallback = (REPO_ROOT / "data" / base_dataset / "alpaca" / normalized_name).resolve()
+            if fallback.exists():
+                return fallback
+        return candidate
+
+    relative_parts = candidate.relative_to(REPO_ROOT).parts
+    if len(relative_parts) >= 3 and relative_parts[0] == "data":
+        dataset_dir = relative_parts[1]
+        filename = relative_parts[-1]
+        fallback_candidates: list[Path] = []
+
+        fallback_candidates.append((REPO_ROOT / "data" / dataset_dir / "alpaca" / filename).resolve())
+
+        if dataset_dir.endswith("_subsampled") and filename.endswith("_test.json"):
+            base_dataset = dataset_dir[: -len("_subsampled")]
+            normalized_name = _strip_subsampled_test_suffix(Path(filename).stem) + Path(filename).suffix
+            fallback_candidates.append((REPO_ROOT / "data" / base_dataset / "alpaca" / normalized_name).resolve())
+
+        for fallback in fallback_candidates:
+            try:
+                fallback.relative_to(REPO_ROOT.resolve())
+            except ValueError:
+                continue
+            if fallback.exists():
+                return fallback
+
+    raise HTTPException(status_code=404, detail=f"data_json not found: {_to_relative_repo_path(candidate)}")
+
+
+def _resolve_checkpoint_dir(path_value: str) -> Path:
+    cleaned = path_value.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="checkpoint_dir cannot be empty.")
+
+    if Path(cleaned).is_absolute():
+        checkpoint_dir = _resolve_repo_path(cleaned, "checkpoint_dir")
+    else:
+        # Frontend checkpoint options come from /api/outputs, so relative paths
+        # should resolve under outputs/ whether they include the prefix or not.
+        checkpoint_dir = _resolve_outputs_path(cleaned)
+
+    # Accept callers that accidentally pass the checkpoint file or its parent.
+    if checkpoint_dir.name == "model.bin":
+        checkpoint_dir = checkpoint_dir.parent.parent
+    elif checkpoint_dir.name == "checkpoint-best-f1":
+        checkpoint_dir = checkpoint_dir.parent
+
+    candidate_dirs: list[Path] = []
+
+    def _add_candidate(path: Path) -> None:
+        if path not in candidate_dirs:
+            candidate_dirs.append(path)
+
+    _add_candidate(checkpoint_dir)
+
+    # Some callers append "_imbalance" to the dataset directory name.
+    if checkpoint_dir.name.endswith("_imbalance"):
+        _add_candidate(checkpoint_dir.with_name(checkpoint_dir.name[: -len("_imbalance")]))
+
+    parent_name = checkpoint_dir.parent.name
+    dataset_name = checkpoint_dir.name
+    if parent_name and checkpoint_dir.parent.parent == OUTPUTS_ROOT:
+        # Real imbalance checkpoints live under outputs/<MODEL>_imbalance/<DATASET>_<POS_RATIO>.
+        imbalance_root = checkpoint_dir.parent.with_name(f"{parent_name}_imbalance")
+        if dataset_name.endswith("_imbalance"):
+            base_dataset_name = dataset_name[: -len("_imbalance")]
+            _add_candidate(imbalance_root / dataset_name)
+            _add_candidate(imbalance_root / base_dataset_name)
+            _add_candidate(imbalance_root / f"{base_dataset_name}_1")
+        else:
+            _add_candidate(imbalance_root / dataset_name)
+            _add_candidate(imbalance_root / f"{dataset_name}_1")
+
+    for candidate_dir in candidate_dirs:
+        checkpoint_file = candidate_dir / "checkpoint-best-f1" / "model.bin"
+        if checkpoint_file.exists():
+            return candidate_dir
+
+    searched_paths = ", ".join(str(path / "checkpoint-best-f1" / "model.bin") for path in candidate_dirs)
+    raise HTTPException(status_code=404, detail=f"checkpoint file not found: {searched_paths}")
 
 
 def _resolve_llm_test_path(root_key: str, relative_path: str = "") -> Path:
@@ -127,6 +266,184 @@ def _read_text_file(path: Path, max_chars: int) -> str:
 
 def _to_relative_repo_path(path: Path) -> str:
     return str(path.resolve().relative_to(REPO_ROOT.resolve()))
+
+
+def _normalize_prompt_name(prompt_name: str) -> str:
+    cleaned = prompt_name.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="prompt_name cannot be empty.")
+
+    candidate = Path(cleaned)
+    if candidate.is_absolute() or candidate.name != cleaned or cleaned in {".", ".."}:
+        raise HTTPException(status_code=400, detail="prompt_name must be a simple file name.")
+
+    if candidate.suffix != ".txt":
+        cleaned = f"{cleaned}.txt"
+    return cleaned
+
+
+def _normalize_upload_filename(filename: str) -> str:
+    cleaned = Path(filename.strip()).name
+    if not cleaned or cleaned in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Uploaded file must have a valid file name.")
+    if Path(cleaned).name != cleaned:
+        raise HTTPException(status_code=400, detail="Uploaded file name must not contain path separators.")
+    return cleaned
+
+
+def _normalize_dataset_name(dataset_name: str) -> str:
+    cleaned = dataset_name.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="dataset_name cannot be empty.")
+    candidate = Path(cleaned)
+    if candidate.is_absolute() or candidate.name != cleaned or cleaned in {".", ".."}:
+        raise HTTPException(status_code=400, detail="dataset_name must be a simple directory name.")
+    return cleaned
+
+
+def _parse_bucket_boundaries(bucket_boundaries: str) -> list[int]:
+    values: list[int] = []
+    for item in bucket_boundaries.split(","):
+        stripped = item.strip()
+        if not stripped:
+            continue
+        try:
+            parsed = int(stripped)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid bucket boundary: {stripped}") from exc
+        if parsed <= 0:
+            raise HTTPException(status_code=400, detail="Bucket boundaries must be positive integers.")
+        values.append(parsed)
+    if not values:
+        raise HTTPException(status_code=400, detail="At least one bucket boundary is required.")
+    return sorted(set(values))
+
+
+def _build_bucket_specs(boundaries: list[int]) -> list[tuple[str, int, Optional[int]]]:
+    bucket_specs: list[tuple[str, int, Optional[int]]] = []
+    lower = 0
+    for upper in boundaries:
+        bucket_specs.append((f"{lower}-{upper}", lower, upper))
+        lower = upper
+    bucket_specs.append((f"{lower}-*", lower, None))
+    return bucket_specs
+
+
+def _find_bucket(length: int, bucket_specs: list[tuple[str, int, Optional[int]]]) -> str:
+    for bucket_name, lower, upper in bucket_specs:
+        if upper is None and length >= lower:
+            return bucket_name
+        if upper is not None and lower <= length < upper:
+            return bucket_name
+    raise HTTPException(status_code=400, detail=f"Unable to bucket sample with token length {length}.")
+
+
+def _load_uploaded_json_array(path: Path) -> list[dict]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Uploaded file is not valid JSON: {path.name}") from exc
+    if not isinstance(payload, list):
+        raise HTTPException(status_code=400, detail="Uploaded JSON must be a top-level array.")
+    if any(not isinstance(item, dict) for item in payload):
+        raise HTTPException(status_code=400, detail="Uploaded JSON array must contain only objects.")
+    return payload
+
+
+def _detect_frontend_data_format(rows: list[dict]) -> str:
+    if not rows:
+        raise HTTPException(status_code=400, detail="Uploaded JSON array is empty.")
+    sample = rows[0]
+    if "code" in sample and "label" in sample:
+        return "raw"
+    if "input" in sample and "output" in sample:
+        return "alpaca"
+    raise HTTPException(
+        status_code=400,
+        detail="Unsupported JSON schema. Expected raw {code,label,index} or alpaca {instruction,input,output,index}.",
+    )
+
+
+def _to_alpaca_rows(rows: list[dict], input_format: str, instruction: str) -> list[dict]:
+    alpaca_rows: list[dict] = []
+    for position, row in enumerate(rows):
+        if input_format == "raw":
+            if "code" not in row or "label" not in row:
+                raise HTTPException(status_code=400, detail=f"Raw row {position} is missing code or label.")
+            alpaca_rows.append(
+                {
+                    "instruction": instruction,
+                    "input": row.get("code", ""),
+                    "output": str(row.get("label", "")),
+                    "index": row.get("index", position),
+                }
+            )
+        else:
+            if "input" not in row or "output" not in row:
+                raise HTTPException(status_code=400, detail=f"Alpaca row {position} is missing input or output.")
+            normalized = dict(row)
+            normalized.setdefault("instruction", instruction)
+            normalized.setdefault("index", position)
+            normalized["output"] = str(normalized.get("output", ""))
+            alpaca_rows.append(normalized)
+    return alpaca_rows
+
+
+def _create_prompt_file(prompt_name: str, prompt_content: str, *, overwrite: bool) -> Path:
+    content = prompt_content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="prompt_content cannot be empty.")
+
+    LLM_TEST_PROMPT_ROOT.mkdir(parents=True, exist_ok=True)
+    normalized_name = _normalize_prompt_name(prompt_name)
+    target = (LLM_TEST_PROMPT_ROOT / normalized_name).resolve()
+    try:
+        target.relative_to(LLM_TEST_PROMPT_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid prompt target path.") from exc
+
+    if target.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Prompt already exists: {_to_relative_repo_path(target)}. Set overwrite=true to replace it.",
+        )
+
+    target.write_text(prompt_content, encoding="utf-8")
+    return target
+
+
+def _resolve_or_create_prompt_file(
+    *,
+    prompt_file: Optional[str],
+    prompt_name: Optional[str],
+    prompt_content: Optional[str],
+    prompt_overwrite: bool,
+) -> Path:
+    has_prompt_file = bool(prompt_file and prompt_file.strip())
+    has_prompt_name = bool(prompt_name and prompt_name.strip())
+    has_prompt_content = bool(prompt_content and prompt_content.strip())
+
+    if has_prompt_file and (has_prompt_name or has_prompt_content):
+        raise HTTPException(
+            status_code=400,
+            detail="Use either prompt_file or prompt_name + prompt_content, not both.",
+        )
+
+    if has_prompt_file:
+        return _resolve_repo_path(prompt_file, "prompt_file")
+
+    if has_prompt_name or has_prompt_content:
+        if not has_prompt_name or not has_prompt_content:
+            raise HTTPException(
+                status_code=400,
+                detail="prompt_name and prompt_content must be provided together.",
+            )
+        return _create_prompt_file(prompt_name or "", prompt_content or "", overwrite=prompt_overwrite)
+
+    raise HTTPException(
+        status_code=400,
+        detail="Either prompt_file or prompt_name + prompt_content is required.",
+    )
 
 
 def _build_file_option(path: Path) -> FileOption:
@@ -154,6 +471,18 @@ def _scan_dir_options(base_root: Path, child_name: str) -> list[FileOption]:
                 )
             )
     return options
+
+
+def _merge_file_options(*option_groups: list[FileOption]) -> list[FileOption]:
+    merged: list[FileOption] = []
+    seen_paths: set[str] = set()
+    for group in option_groups:
+        for item in group:
+            if item.path in seen_paths:
+                continue
+            seen_paths.add(item.path)
+            merged.append(item)
+    return merged
 
 
 def _list_directory(root_path: Path, target: Path) -> OutputListResponse:
@@ -285,6 +614,168 @@ def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/api/data/upload", response_model=DataUploadResponse)
+def upload_data_file(
+    file: UploadFile = File(...),
+    relative_dir: str = Form(default=""),
+    overwrite: bool = Form(default=False),
+) -> DataUploadResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must include a file name.")
+
+    filename = _normalize_upload_filename(file.filename)
+    target_dir = _resolve_data_path(relative_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = (target_dir / filename).resolve()
+    try:
+        target_path.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid upload target path.") from exc
+
+    if target_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Data file already exists: {_to_relative_repo_path(target_path)}. Set overwrite=true to replace it.",
+        )
+
+    try:
+        with target_path.open("wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+    finally:
+        file.file.close()
+
+    return DataUploadResponse(
+        path=_to_relative_repo_path(target_path),
+        relative_path=str(target_path.relative_to(DATA_ROOT.resolve())),
+        filename=target_path.name,
+        size=target_path.stat().st_size,
+    )
+
+
+@app.post("/api/frontend/data/ingest", response_model=FrontendDataIngestResponse)
+def frontend_data_ingest(
+    file: UploadFile = File(...),
+    dataset_name: str = Form(...),
+    split_name: str = Form(default="test"),
+    overwrite: bool = Form(default=False),
+    bucket_boundaries: str = Form(default="512,1024"),
+    tokenizer_path: str = Form(default=""),
+    instruction: str = Form(default="Detect whether the following code contains vulnerabilities."),
+) -> FrontendDataIngestResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must include a file name.")
+
+    normalized_dataset_name = _normalize_dataset_name(dataset_name)
+    normalized_split_name = split_name.strip()
+    if normalized_split_name not in {"train", "validate", "test"}:
+        raise HTTPException(status_code=400, detail="split_name must be one of train, validate, or test.")
+
+    boundaries = _parse_bucket_boundaries(bucket_boundaries)
+    bucket_specs = _build_bucket_specs(boundaries)
+
+    dataset_dir = _resolve_data_path(normalized_dataset_name)
+    uploads_dir = dataset_dir / "uploads"
+    alpaca_dir = dataset_dir / "alpaca"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    alpaca_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = _normalize_upload_filename(file.filename)
+    uploaded_path = (uploads_dir / filename).resolve()
+    try:
+        uploaded_path.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid upload target path.") from exc
+
+    if uploaded_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Data file already exists: {_to_relative_repo_path(uploaded_path)}. Set overwrite=true to replace it.",
+        )
+
+    try:
+        with uploaded_path.open("wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+    finally:
+        file.file.close()
+
+    rows = _load_uploaded_json_array(uploaded_path)
+    input_format = _detect_frontend_data_format(rows)
+    alpaca_rows = _to_alpaca_rows(rows, input_format, instruction)
+
+    from transformers import AutoTokenizer
+
+    resolved_tokenizer_path = (
+        _resolve_repo_path(tokenizer_path, "tokenizer_path")
+        if tokenizer_path.strip()
+        else (REPO_ROOT / "model" / "Llama-3.2-1B").resolve()
+    )
+    tokenizer = AutoTokenizer.from_pretrained(str(resolved_tokenizer_path))
+    tokenizer.model_max_length = 10**12
+
+    alpaca_path = alpaca_dir / f"{normalized_dataset_name}_{normalized_split_name}.json"
+    bucket_paths = {
+        bucket_name: alpaca_dir / f"{normalized_dataset_name}_{bucket_name}_{normalized_split_name}.json"
+        for bucket_name, _, _ in bucket_specs
+    }
+
+    if alpaca_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Alpaca file already exists: {_to_relative_repo_path(alpaca_path)}. Set overwrite=true to replace it.",
+        )
+    for path in bucket_paths.values():
+        if path.exists() and not overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Bucketed file already exists: {_to_relative_repo_path(path)}. Set overwrite=true to replace it.",
+            )
+
+    enriched_rows: list[dict] = []
+    bucketed_rows: dict[str, list[dict]] = {bucket_name: [] for bucket_name in bucket_paths}
+    bucket_counts: dict[str, int] = {bucket_name: 0 for bucket_name in bucket_paths}
+
+    for row in alpaca_rows:
+        token_length = len(tokenizer.tokenize(row.get("input", ""))) + tokenizer.num_special_tokens_to_add(pair=False)
+        enriched = dict(row)
+        enriched["token_length"] = token_length
+        bucket_name = _find_bucket(token_length, bucket_specs)
+        enriched_rows.append(enriched)
+        bucketed_rows[bucket_name].append(enriched)
+        bucket_counts[bucket_name] += 1
+
+    alpaca_path.write_text(json.dumps(enriched_rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    for bucket_name, path in bucket_paths.items():
+        path.write_text(json.dumps(bucketed_rows[bucket_name], ensure_ascii=False, indent=2), encoding="utf-8")
+
+    summary_path = alpaca_dir / f"{normalized_dataset_name}_{normalized_split_name}_rebucket_summary.json"
+    summary_payload = {
+        "dataset_name": normalized_dataset_name,
+        "split_name": normalized_split_name,
+        "input_format": input_format,
+        "uploaded_path": _to_relative_repo_path(uploaded_path),
+        "alpaca_path": _to_relative_repo_path(alpaca_path),
+        "tokenizer_path": _to_relative_repo_path(resolved_tokenizer_path)
+        if str(resolved_tokenizer_path).startswith(str(REPO_ROOT.resolve()))
+        else str(resolved_tokenizer_path),
+        "bucket_boundaries": boundaries,
+        "total_samples": len(enriched_rows),
+        "bucket_counts": bucket_counts,
+    }
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return FrontendDataIngestResponse(
+        dataset_name=normalized_dataset_name,
+        split_name=normalized_split_name,
+        input_format=input_format,  # type: ignore[arg-type]
+        uploaded_path=_to_relative_repo_path(uploaded_path),
+        alpaca_path=_to_relative_repo_path(alpaca_path),
+        summary_path=_to_relative_repo_path(summary_path),
+        bucket_files=[_to_relative_repo_path(path) for path in bucket_paths.values()],
+        total_samples=len(enriched_rows),
+        bucket_counts=bucket_counts,
+    )
+
+
 @app.get("/api/outputs", response_model=OutputListResponse)
 def list_outputs(relative_path: str = Query(default="")) -> OutputListResponse:
     target = _resolve_outputs_path(relative_path)
@@ -362,8 +853,7 @@ def get_options() -> dict[str, object]:
 
 @app.get("/api/meta/llm-test-options", response_model=LLMTestOptionsResponse)
 def get_llm_test_options() -> LLMTestOptionsResponse:
-    prompt_root = LLM_TEST_ROOT / "Prompt"
-    prompt_paths = sorted(prompt_root.glob("*.txt")) if prompt_root.exists() else []
+    prompt_paths = sorted(LLM_TEST_PROMPT_ROOT.glob("*.txt")) if LLM_TEST_PROMPT_ROOT.exists() else []
     prompt_files = [str(path.relative_to(REPO_ROOT)) for path in prompt_paths]
 
     config_files = [
@@ -379,25 +869,29 @@ def get_llm_test_options() -> LLMTestOptionsResponse:
         prompt_files=prompt_files,
         review_scripts=[
             "LLM_TEST/extract_positive_samples.py",
+            "LLM_TEST/prepare_full_test_samples.py",
             "LLM_TEST/llm_api_judge.py",
             "LLM_TEST/recompute_metrics.py",
+            "LLM_TEST/evaluate_llm_full_dataset.py",
             "LLM_TEST/run_review.sh",
             "LLM_TEST/ensemble_vote.py",
         ],
         ensemble_strategies=["any", "majority", "threshold", "weighted"],
         results_csv_options=_scan_glob_options(OUTPUTS_ROOT, "**/results.csv"),
-        input_json_options=_scan_glob_options(LLM_TEST_INTERMEDIATE_ROOT, "**/positive_samples.json"),
+        input_json_options=_scan_glob_options(LLM_TEST_INTERMEDIATE_ROOT, "**/positive_samples.jsonl"),
+        full_input_json_options=_scan_glob_options(LLM_TEST_INTERMEDIATE_ROOT, "**/full_test_samples.jsonl"),
         llm_predictions_csv_options=_scan_glob_options(LLM_TEST_OUTPUT_ROOT, "**/llm_predictions.csv"),
         metrics_json_options=_scan_glob_options(LLM_TEST_OUTPUT_ROOT, "**/metrics.json"),
+        full_metrics_json_options=_scan_glob_options(LLM_TEST_OUTPUT_ROOT, "**/full_llm_metrics.json"),
         llm_summary_options=_scan_glob_options(LLM_TEST_OUTPUT_ROOT, "**/llm_summary.json"),
-        intermediate_dir_options=_scan_dir_options(LLM_TEST_INTERMEDIATE_ROOT, "positive_samples.json"),
+        intermediate_dir_options=_scan_dir_options(LLM_TEST_INTERMEDIATE_ROOT, "positive_samples.jsonl"),
         output_dir_options=_scan_dir_options(LLM_TEST_OUTPUT_ROOT, "llm_predictions.csv"),
     )
 
 
 @app.get("/api/llm-test/files", response_model=OutputListResponse)
 def list_llm_test_files(
-    root: str = Query(..., pattern="^(intermediate|output)$"),
+    root: str = Query(..., pattern="^(prompt|intermediate|output)$"),
     relative_path: str = Query(default=""),
 ) -> OutputListResponse:
     target = _resolve_llm_test_path(root, relative_path)
@@ -409,7 +903,7 @@ def list_llm_test_files(
 
 @app.get("/api/llm-test/files/text", response_model=OutputTextResponse)
 def read_llm_test_text(
-    root: str = Query(..., pattern="^(intermediate|output)$"),
+    root: str = Query(..., pattern="^(prompt|intermediate|output)$"),
     relative_path: str = Query(...),
     max_chars: int = Query(default=200000, ge=1, le=1000000),
 ) -> OutputTextResponse:
@@ -429,7 +923,7 @@ def read_llm_test_text(
 
 @app.get("/api/llm-test/files/file")
 def get_llm_test_file(
-    root: str = Query(..., pattern="^(intermediate|output)$"),
+    root: str = Query(..., pattern="^(prompt|intermediate|output)$"),
     relative_path: str = Query(...),
 ) -> FileResponse:
     target = _resolve_llm_test_path(root, relative_path)
@@ -439,6 +933,16 @@ def get_llm_test_file(
 
     media_type, _ = mimetypes.guess_type(str(target))
     return FileResponse(target, media_type=media_type or "application/octet-stream", filename=target.name)
+
+
+@app.post("/api/llm-test/prompts", response_model=PromptFileResponse)
+def create_llm_test_prompt(payload: PromptCreateRequest) -> PromptFileResponse:
+    prompt_file = _create_prompt_file(payload.prompt_name, payload.prompt_content, overwrite=payload.overwrite)
+    return PromptFileResponse(
+        path=_to_relative_repo_path(prompt_file),
+        prompt_name=prompt_file.name,
+        content=prompt_file.read_text(encoding="utf-8"),
+    )
 
 
 @app.post("/api/jobs/classical", response_model=JobResponse)
@@ -460,6 +964,82 @@ def create_classical_job(payload: ClassicalJobRequest) -> JobResponse:
         log_file=log_path,
         result_csv=output_dir / "results.csv",
         params=payload.model_dump(),
+    )
+
+
+@app.post("/api/frontend/code-inference", response_model=FrontendCodeInferenceResponse)
+def frontend_code_inference(payload: FrontendCodeInferenceRequest) -> FrontendCodeInferenceResponse:
+    checkpoint_dir = _resolve_checkpoint_dir(payload.checkpoint_dir)
+    try:
+        result = run_single_inference(
+            model_name=payload.model_name,
+            checkpoint_dir=checkpoint_dir,
+            code=payload.code,
+            block_size=payload.block_size,
+            instruction=payload.instruction,
+            sample_index=payload.sample_index,
+            device_name=payload.device,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return FrontendCodeInferenceResponse(**result)
+
+
+@app.post("/api/frontend/code-chunking", response_model=FrontendCodeChunkResponse)
+def frontend_code_chunking(payload: FrontendCodeChunkRequest) -> FrontendCodeChunkResponse:
+    items: list[FrontendCodeChunkItem] = []
+
+    if payload.items:
+        items.extend(payload.items)
+
+    if payload.code and payload.code.strip():
+        items.append(
+            FrontendCodeChunkItem(
+                code=payload.code,
+                language=payload.language,
+                filename=payload.filename,
+                sample_id=payload.sample_id,
+            )
+        )
+
+    if not items:
+        raise HTTPException(status_code=400, detail="Provide either code or items for chunking.")
+
+    results: list[FrontendCodeChunkResult] = []
+    total_chunks = 0
+
+    for item in items:
+        try:
+            chunking_result = run_code_chunking(
+                code=item.code,
+                language=item.language,
+                max_chars=payload.max_chars,
+                max_tokens=payload.max_tokens,
+                fallback_lines=payload.fallback_lines,
+                tokenizer_model_path=payload.tokenizer_model_path,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        chunk_count = int(chunking_result["chunk_count"])
+        total_chunks += chunk_count
+        results.append(
+            FrontendCodeChunkResult(
+                sample_id=item.sample_id,
+                filename=item.filename,
+                **chunking_result,
+            )
+        )
+
+    return FrontendCodeChunkResponse(
+        total_inputs=len(items),
+        total_chunks=total_chunks,
+        results=results,
     )
 
 
@@ -600,15 +1180,55 @@ def create_llm_test_extract_job(payload: LLMTestExtractJobRequest) -> JobRespons
         command=command,
         output_dir=output_dir,
         log_file=log_file,
-        result_csv=output_dir / "positive_samples.json",
+        result_csv=output_dir / "positive_samples.jsonl",
         params=payload.model_dump(),
+    )
+
+
+@app.post("/api/jobs/llm-test/full/prepare", response_model=JobResponse)
+def create_llm_test_full_prepare_job(payload: LLMTestFullPrepareJobRequest) -> JobResponse:
+    data_json = _resolve_full_prepare_data_json(payload.data_json)
+    output_root = _resolve_repo_path(payload.output_root, "output_root")
+    results_csv = _resolve_repo_path(payload.results_csv, "results_csv") if payload.results_csv else None
+    output_subdir = payload.output_subdir or f"fulltest_{data_json.stem}"
+    output_dir = output_root / output_subdir
+    log_file = output_dir / "prepare_full_test_samples.log"
+
+    command = [
+        "python3",
+        str(LLM_TEST_ROOT / "prepare_full_test_samples.py"),
+        "--data_json",
+        str(data_json),
+        "--output_root",
+        str(output_root),
+        "--output_subdir",
+        output_subdir,
+    ]
+    if results_csv is not None:
+        command.extend(["--results_csv", str(results_csv)])
+    if payload.limit is not None:
+        command.extend(["--limit", str(payload.limit)])
+
+    return _launch_command_job(
+        job_type="llm_test_full_prepare",
+        script_name="prepare_full_test_samples.py",
+        command=command,
+        output_dir=output_dir,
+        log_file=log_file,
+        result_csv=output_dir / "full_test_samples.jsonl",
+        params=payload.model_dump(exclude_none=True),
     )
 
 
 @app.post("/api/jobs/llm-test/judge", response_model=JobResponse)
 def create_llm_test_judge_job(payload: LLMTestJudgeJobRequest) -> JobResponse:
     input_json = _resolve_repo_path(payload.input_json, "input_json")
-    prompt_file = _resolve_repo_path(payload.prompt_file, "prompt_file")
+    prompt_file = _resolve_or_create_prompt_file(
+        prompt_file=payload.prompt_file,
+        prompt_name=payload.prompt_name,
+        prompt_content=payload.prompt_content,
+        prompt_overwrite=payload.prompt_overwrite,
+    )
     output_root = _resolve_repo_path(payload.output_root, "output_root")
     output_name = payload.output_name or input_json.parent.name
     output_dir = output_root / output_name
@@ -703,11 +1323,51 @@ def create_llm_test_metrics_job(payload: LLMTestMetricsJobRequest) -> JobRespons
     )
 
 
+@app.post("/api/jobs/llm-test/full/metrics", response_model=JobResponse)
+def create_llm_test_full_metrics_job(payload: LLMTestFullMetricsJobRequest) -> JobResponse:
+    llm_predictions_csv = _resolve_repo_path(payload.llm_predictions_csv, "llm_predictions_csv")
+    output_dir = (
+        _resolve_repo_path(payload.output_dir, "output_dir")
+        if payload.output_dir
+        else llm_predictions_csv.parent
+    )
+    log_file = output_dir / "evaluate_llm_full_dataset.log"
+
+    command = [
+        "python3",
+        str(LLM_TEST_ROOT / "evaluate_llm_full_dataset.py"),
+        "--env_file",
+        str(_resolve_repo_path(payload.env_file, "env_file")),
+        "--llm_predictions_csv",
+        str(llm_predictions_csv),
+        "--output_dir",
+        str(output_dir),
+    ]
+
+    return _launch_command_job(
+        job_type="llm_test_full_metrics",
+        script_name="evaluate_llm_full_dataset.py",
+        command=command,
+        output_dir=output_dir,
+        log_file=log_file,
+        result_csv=output_dir / "full_llm_metrics.json",
+        params=payload.model_dump(exclude_none=True),
+    )
+
+
 @app.post("/api/jobs/llm-test/review", response_model=JobResponse)
 def create_llm_test_review_job(payload: LLMTestReviewJobRequest) -> JobResponse:
     config_path = _resolve_repo_path(payload.config, "config")
     env_path = _resolve_repo_path(payload.env, "env")
     output_root = _resolve_repo_path(payload.output_root, "output_root") if payload.output_root else None
+    prompt_file = None
+    if payload.prompt_file or payload.prompt_name or payload.prompt_content:
+        prompt_file = _resolve_or_create_prompt_file(
+            prompt_file=payload.prompt_file,
+            prompt_name=payload.prompt_name,
+            prompt_content=payload.prompt_content,
+            prompt_overwrite=payload.prompt_overwrite,
+        )
 
     command = [
         "bash",
@@ -729,8 +1389,8 @@ def create_llm_test_review_job(payload: LLMTestReviewJobRequest) -> JobResponse:
         command.extend(["--limit", str(payload.limit)])
     if payload.data_json:
         command.extend(["--data-json", str(_resolve_repo_path(payload.data_json, "data_json"))])
-    if payload.prompt_file:
-        command.extend(["--prompt-file", str(_resolve_repo_path(payload.prompt_file, "prompt_file"))])
+    if prompt_file is not None:
+        command.extend(["--prompt-file", str(prompt_file)])
     if output_root is not None:
         command.extend(["--output-root", str(output_root)])
 

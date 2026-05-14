@@ -76,7 +76,10 @@ class LLMTestJudgeJobRequest(BaseModel):
     config: str = "LLM_TEST/exp.yaml"
     env_file: str = "LLM_TEST/.env"
     input_json: str = Field(..., min_length=1)
-    prompt_file: str = Field(..., min_length=1)
+    prompt_file: Optional[str] = None
+    prompt_name: Optional[str] = None
+    prompt_content: Optional[str] = None
+    prompt_overwrite: bool = False
     model: Optional[str] = None
     api_base: Optional[str] = None
     api_key: Optional[str] = None
@@ -93,10 +96,24 @@ class LLMTestJudgeJobRequest(BaseModel):
     fail_fast_on_error: bool = False
 
 
+class LLMTestFullPrepareJobRequest(BaseModel):
+    data_json: str = Field(..., min_length=1)
+    results_csv: Optional[str] = None
+    output_root: str = "LLM_TEST/intermediate"
+    output_subdir: Optional[str] = None
+    limit: Optional[int] = Field(default=None, ge=1)
+
+
 class LLMTestMetricsJobRequest(BaseModel):
     config: str = "LLM_TEST/exp.yaml"
     env_file: str = "LLM_TEST/.env"
     results_csv: str = Field(..., min_length=1)
+    llm_predictions_csv: str = Field(..., min_length=1)
+    output_dir: Optional[str] = None
+
+
+class LLMTestFullMetricsJobRequest(BaseModel):
+    env_file: str = "LLM_TEST/.env"
     llm_predictions_csv: str = Field(..., min_length=1)
     output_dir: Optional[str] = None
 
@@ -111,7 +128,88 @@ class LLMTestReviewJobRequest(BaseModel):
     workers: int = Field(default=1, ge=1)
     data_json: Optional[str] = None
     prompt_file: Optional[str] = None
+    prompt_name: Optional[str] = None
+    prompt_content: Optional[str] = None
+    prompt_overwrite: bool = False
     output_root: Optional[str] = None
+
+
+class PromptCreateRequest(BaseModel):
+    prompt_name: str = Field(..., min_length=1)
+    prompt_content: str = Field(..., min_length=1)
+    overwrite: bool = False
+
+
+class PromptFileResponse(BaseModel):
+    path: str
+    prompt_name: str
+    content: str
+
+
+class DataUploadResponse(BaseModel):
+    path: str
+    relative_path: str
+    filename: str
+    size: int
+
+
+class FrontendDataIngestResponse(BaseModel):
+    dataset_name: str
+    split_name: str
+    input_format: Literal["raw", "alpaca"]
+    uploaded_path: str
+    alpaca_path: str
+    summary_path: str
+    bucket_files: list[str]
+    total_samples: int
+    bucket_counts: dict[str, int]
+
+
+class FrontendCodeChunkItem(BaseModel):
+    code: str = Field(..., min_length=1)
+    language: Optional[str] = None
+    filename: Optional[str] = None
+    sample_id: Optional[str] = None
+
+
+class FrontendCodeChunkRequest(BaseModel):
+    code: Optional[str] = None
+    language: Optional[str] = None
+    filename: Optional[str] = None
+    sample_id: Optional[str] = None
+    items: Optional[list[FrontendCodeChunkItem]] = None
+    max_chars: int = Field(default=1800, ge=128, le=20000)
+    max_tokens: int = Field(default=512, ge=8, le=4096)
+    fallback_lines: int = Field(default=80, ge=1, le=2000)
+    tokenizer_model_path: Optional[str] = None
+
+
+class FrontendCodeChunk(BaseModel):
+    index: int
+    text: str
+    start_line: int
+    end_line: int
+    token_count: int
+
+
+class FrontendCodeChunkResult(BaseModel):
+    sample_id: Optional[str] = None
+    filename: Optional[str] = None
+    language: Optional[str] = None
+    normalized_language: Optional[str] = None
+    chunk_source: str
+    max_chars: int
+    max_tokens: int
+    fallback_lines: int
+    tokenizer_model_path: Optional[str] = None
+    chunk_count: int
+    chunks: list[FrontendCodeChunk]
+
+
+class FrontendCodeChunkResponse(BaseModel):
+    total_inputs: int
+    total_chunks: int
+    results: list[FrontendCodeChunkResult]
 
 
 class LLMTestEnsembleInput(BaseModel):
@@ -185,8 +283,33 @@ class LLMTestOptionsResponse(BaseModel):
     ensemble_strategies: list[EnsembleStrategy]
     results_csv_options: list[FileOption]
     input_json_options: list[FileOption]
+    full_input_json_options: list[FileOption]
     llm_predictions_csv_options: list[FileOption]
     metrics_json_options: list[FileOption]
+    full_metrics_json_options: list[FileOption]
     llm_summary_options: list[FileOption]
     intermediate_dir_options: list[FileOption]
     output_dir_options: list[FileOption]
+
+
+class FrontendCodeInferenceRequest(BaseModel):
+    model_name: Literal["CodeBERT", "UniXcoder"]
+    checkpoint_dir: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=1)
+    instruction: str = "Detect whether the following code contains vulnerabilities."
+    block_size: int = Field(default=512, ge=8, le=4096)
+    sample_index: int = 0
+    device: Literal["auto", "cpu", "cuda"] = "auto"
+
+
+class FrontendCodeInferenceResponse(BaseModel):
+    model_name: Literal["CodeBERT", "UniXcoder"]
+    checkpoint_dir: str
+    checkpoint_file: str
+    device: str
+    prediction: Literal[0, 1]
+    is_vulnerable: bool
+    vulnerability_probability: float
+    non_vulnerable_probability: float
+    temp_dir: str
+    input_json: str

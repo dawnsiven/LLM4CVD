@@ -209,6 +209,236 @@ curl -O "http://127.0.0.1:8000/api/outputs/file?relative_path=UniXcoder_imbalanc
 <img src="http://127.0.0.1:8000/api/outputs/file?relative_path=UniXcoder_imbalance/bigvul_cwe119_1_1/true_distribution.png" />
 ```
 
+### 2.4 `POST /api/frontend/code-inference`
+
+用途：给前端直接提交一段待检测代码，调用已经训练好的小模型做单样本推理。  
+这个接口不会要求前端提供 `output` 真值标签，因为真实用户提交的代码本来就未知是否有漏洞。
+
+当前支持模型：
+
+- `CodeBERT`
+- `UniXcoder`
+
+接口行为：
+
+- 后端会在 `data/temp_inference/<uuid>/` 下创建临时目录
+- 将本次输入保存为 `input.json`
+- 写入 `metadata.json`
+- 将预测结果保存为 `prediction.json`
+- 同时把预测结果直接返回给前端
+
+请求体：
+
+```json
+{
+  "model_name": "CodeBERT",
+  "checkpoint_dir": "outputs/CodeBERT/cvefixes_cwe20_0-512",
+  "code": "int main() { char buf[8]; gets(buf); return 0; }",
+  "instruction": "Detect whether the following code contains vulnerabilities.",
+  "block_size": 512,
+  "sample_index": 0,
+  "device": "auto"
+}
+```
+
+字段说明：
+
+- `model_name`: 当前支持 `CodeBERT` 或 `UniXcoder`
+- `checkpoint_dir`: 已训练模型的输出目录，不是 `model.bin` 文件本身，例如 `outputs/CodeBERT/cvefixes_cwe20_0-512`
+- `code`: 前端提交的待检测代码
+- `instruction`: 可选，自定义任务提示词
+- `block_size`: 最大 token 长度，默认 `512`
+- `sample_index`: 可选，给单条样本一个索引，默认 `0`
+- `device`: `auto`、`cpu`、`cuda`
+
+成功响应示例：
+
+```json
+{
+  "model_name": "CodeBERT",
+  "checkpoint_dir": "/home/zjr123/LLM4CVD-main/outputs/CodeBERT/cvefixes_cwe20_0-512",
+  "checkpoint_file": "/home/zjr123/LLM4CVD-main/outputs/CodeBERT/cvefixes_cwe20_0-512/checkpoint-best-f1/model.bin",
+  "device": "cpu",
+  "prediction": 1,
+  "is_vulnerable": true,
+  "vulnerability_probability": 0.6056362390518188,
+  "non_vulnerable_probability": 0.39436376094818115,
+  "temp_dir": "/home/zjr123/LLM4CVD-main/data/temp_inference/4d8961084c034464bdb2d36613831a29",
+  "input_json": "/home/zjr123/LLM4CVD-main/data/temp_inference/4d8961084c034464bdb2d36613831a29/input.json"
+}
+```
+
+返回字段说明：
+
+- `prediction`: `0` 表示判定为无漏洞，`1` 表示判定为有漏洞
+- `is_vulnerable`: `prediction == 1` 的布尔形式
+- `vulnerability_probability`: 判定为漏洞的概率分数
+- `non_vulnerable_probability`: 判定为无漏洞的概率分数
+- `temp_dir`: 本次请求生成的临时目录
+- `input_json`: 本次请求保存下来的输入文件路径
+
+调用示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/frontend/code-inference \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "CodeBERT",
+    "checkpoint_dir": "outputs/CodeBERT/cvefixes_cwe20_0-512",
+    "code": "int main() { char buf[8]; gets(buf); return 0; }",
+    "block_size": 512,
+    "device": "cpu"
+  }'
+```
+
+前端 `fetch` 示例：
+
+```js
+const response = await fetch("http://127.0.0.1:8000/api/frontend/code-inference", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model_name: "CodeBERT",
+    checkpoint_dir: "outputs/CodeBERT/cvefixes_cwe20_0-512",
+    code: codeInput,
+    block_size: 512,
+    device: "auto",
+  }),
+});
+
+if (!response.ok) {
+  const error = await response.json();
+  throw new Error(error.detail || "Inference request failed");
+}
+
+const result = await response.json();
+console.log(result.prediction, result.vulnerability_probability);
+```
+
+适合的前端展示方式：
+
+- 用 `is_vulnerable` 显示“检测到漏洞 / 未检测到漏洞”
+- 用 `vulnerability_probability` 画进度条或置信度标签
+- 用 `temp_dir` 做问题排查或回溯
+
+注意：
+
+- 这个接口是同步返回，不走 `job_id` 轮询模式
+- 它适合单样本或少量即时检测，不适合大批量离线任务
+- 如果 `checkpoint_dir/checkpoint-best-f1/model.bin` 不存在，请求会返回 `404`
+- 如果请求 `cuda` 但当前机器没有可用 GPU，请求会返回 `400`
+
+### 2.5 `POST /api/frontend/code-chunking`
+
+用途：给前端直接提交单段代码或多段代码，返回纯分割结果。  
+这个接口只做代码分块，不做前后版本对比，也不会筛选“漏洞位置”相关片段。
+
+接口行为：
+
+- 对支持 ASTChunk 的语言优先走 AST 分割
+- AST 分割失败或语言不支持时，退回固定行数分割
+- 如果某个 chunk 超过 `max_tokens`，会继续向下拆分
+- 同步返回全部 chunk 结果，不走 `job_id`
+
+单代码请求体示例：
+
+```json
+{
+  "code": "int main() {\n  char buf[8];\n  gets(buf);\n  return 0;\n}",
+  "language": "c",
+  "filename": "main.c",
+  "sample_id": "demo-1",
+  "max_chars": 1800,
+  "max_tokens": 512,
+  "fallback_lines": 80
+}
+```
+
+批量请求体示例：
+
+```json
+{
+  "items": [
+    {
+      "sample_id": "sample-1",
+      "filename": "a.c",
+      "language": "c",
+      "code": "int main() { return 0; }"
+    },
+    {
+      "sample_id": "sample-2",
+      "filename": "b.py",
+      "language": "python",
+      "code": "def run():\n    print('hello')"
+    }
+  ],
+  "max_chars": 1800,
+  "max_tokens": 512,
+  "fallback_lines": 80
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "total_inputs": 1,
+  "total_chunks": 1,
+  "results": [
+    {
+      "sample_id": "demo-1",
+      "filename": "main.c",
+      "language": "c",
+      "normalized_language": "cpp",
+      "chunk_source": "fallback:cpp",
+      "max_chars": 1800,
+      "max_tokens": 512,
+      "fallback_lines": 80,
+      "tokenizer_model_path": "/home/zjr123/LLM4CVD-main/model/Llama-3.2-1B",
+      "chunk_count": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "text": "int main() {\n  char buf[8];\n  gets(buf);\n  return 0;\n}",
+          "start_line": 1,
+          "end_line": 5,
+          "token_count": 22
+        }
+      ]
+    }
+  ]
+}
+```
+
+返回字段说明：
+
+- `total_inputs`: 本次处理的代码样本数
+- `total_chunks`: 全部样本切出来的 chunk 总数
+- `chunk_source`: 实际使用的分割方式，例如 `ast:python`、`fallback:cpp`
+- `normalized_language`: 规范化后的语言名
+- `chunks[].start_line` / `chunks[].end_line`: 该 chunk 对应的原始代码行号范围
+- `chunks[].token_count`: 该 chunk 的 token 数
+
+适合的前端使用方式：
+
+- 单代码输入框调用这个接口，直接展示“分割预览”
+- 多文件上传后批量调用这个接口，按 `sample_id` 或 `filename` 展示结果
+- 用户点某个 chunk 时，根据 `start_line` / `end_line` 高亮原代码对应范围
+
+调用示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/frontend/code-chunking \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "int main() {\n  char buf[8];\n  gets(buf);\n  return 0;\n}",
+    "language": "c",
+    "filename": "main.c"
+  }'
+```
+
 ### 3. `POST /api/jobs/classical`
 
 用途：创建传统模型训练或测试任务，对应：

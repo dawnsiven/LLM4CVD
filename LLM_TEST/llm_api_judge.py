@@ -1,5 +1,6 @@
 import argparse
 import csv
+import http.client
 import json
 import os
 import re
@@ -13,6 +14,21 @@ from typing import Dict, List, Optional, Tuple
 from config_utils import get_section, load_env_file, load_yaml_config, resolve_value
 
 
+OUTPUT_FORMAT_INSTRUCTIONS = """Output requirements:
+- Return exactly one JSON object.
+- Use this schema:
+{
+  "vulnerable": "yes/no",
+  "cwe": "...",
+  "source": "...",
+  "sink": "...",
+  "missing_check": "...",
+  "reason": "..."
+}
+- Do not wrap the JSON in Markdown fences.
+- Do not add any text before or after the JSON."""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Call an OpenAI-compatible API to re-check extracted positive samples."
@@ -22,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input_json",
         default=None,
-        help="Path to LLM_TEST/intermediate/<dataset_id>/positive_samples.json",
+        help="Path to LLM_TEST/intermediate/<dataset_id>/positive_samples.jsonl",
     )
     parser.add_argument(
         "--prompt_file",
@@ -77,11 +93,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exit immediately when an API or parsing error is encountered.",
     )
+    parser.add_argument(
+        "--start_index",
+        type=int,
+        default=None,
+        help="Only process samples whose sample['index'] is greater than or equal to this value.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse existing outputs in the target directory and skip completed sample indexes.",
+    )
     return parser.parse_args()
 
 
 def load_json(path: Path) -> List[dict]:
     with path.open("r", encoding="utf-8") as handle:
+        if path.suffix == ".jsonl":
+            return [json.loads(line) for line in handle if line.strip()]
         return json.load(handle)
 
 
@@ -90,13 +119,27 @@ def ensure_text(path: Path) -> str:
         return handle.read().strip()
 
 
+def normalize_prompt_template(prompt_template: str) -> str:
+    text = prompt_template.strip()
+    format_markers = [
+        r"\nOutput in JSON format:\s*\{.*?\}\s*$",
+        r"\nReturn only 0 or 1\.?\s*$",
+        r"\nOutput requirements:\s*\{.*?\}\s*$",
+    ]
+    for pattern in format_markers:
+        text = re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
+    return text.strip()
+
+
 def build_user_prompt(prompt_template: str, code: str) -> str:
+    prompt_template = normalize_prompt_template(prompt_template)
     return (
         f"{prompt_template}\n\n"
         "Code:\n"
         "```c\n"
         f"{code}\n"
         "```\n"
+        f"\n{OUTPUT_FORMAT_INSTRUCTIONS}\n"
     )
 
 
@@ -182,6 +225,8 @@ def parse_binary_label(text: str) -> Tuple[Optional[int], Optional[str]]:
 
 def is_retryable_exception(exc: Exception) -> bool:
     if isinstance(exc, urllib.error.URLError):
+        return True
+    if isinstance(exc, http.client.RemoteDisconnected):
         return True
     if isinstance(exc, TimeoutError):
         return True
@@ -276,6 +321,40 @@ def write_csv(path: Path, rows: List[dict]) -> None:
             writer.writerow(row)
 
 
+def to_int(value: object, default: Optional[int] = None) -> Optional[int]:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def load_existing_csv_rows(path: Path) -> List[dict]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def index_existing_csv_rows(rows: List[dict]) -> Dict[int, dict]:
+    indexed: Dict[int, dict] = {}
+    for row in rows:
+        sample_index = to_int(row.get("Index"))
+        if sample_index is None:
+            continue
+        indexed[sample_index] = row
+    return indexed
+
+
+def index_existing_judgments(rows: List[dict]) -> Dict[int, dict]:
+    indexed: Dict[int, dict] = {}
+    for row in rows:
+        sample_index = to_int(row.get("index"))
+        if sample_index is None:
+            continue
+        indexed[sample_index] = row
+    return indexed
+
+
 def build_output_name(
     dataset_id: str,
     prompt_file: Path,
@@ -359,7 +438,13 @@ def process_sample(
             if llm_prediction is None:
                 raise ValueError("Could not parse vulnerable=yes/no from model response.")
             break
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        except (
+            urllib.error.HTTPError,
+            urllib.error.URLError,
+            http.client.RemoteDisconnected,
+            TimeoutError,
+            ValueError,
+        ) as exc:
             last_error = summarize_error(exc, response_text)
             should_retry = is_retryable_exception(exc)
             if attempt == retries or not should_retry:
@@ -443,11 +528,43 @@ def main() -> None:
     if args.workers <= 0:
         raise ValueError("--workers must be a positive integer.")
 
+    sample_order_by_index = {
+        int(sample["index"]): order for order, sample in enumerate(positive_samples) if sample.get("index") is not None
+    }
     judgments_by_order: List[Optional[dict]] = [None] * len(positive_samples)
     csv_by_order: List[Optional[dict]] = [None] * len(positive_samples)
+    judgments_path = output_dir / "llm_judgments.jsonl"
+    csv_path = output_dir / "llm_predictions.csv"
+
+    if args.resume:
+        existing_judgments = load_json(judgments_path) if judgments_path.exists() else []
+        existing_csv_rows = load_existing_csv_rows(csv_path)
+        judgments_by_index = index_existing_judgments(existing_judgments)
+        csv_by_index = index_existing_csv_rows(existing_csv_rows)
+
+        for sample_index, order in sample_order_by_index.items():
+            judgment = judgments_by_index.get(sample_index)
+            csv_row = csv_by_index.get(sample_index)
+            if judgment is not None:
+                judgment.setdefault("dataset_id", dataset_id)
+                judgments_by_order[order] = judgment
+            if csv_row is not None:
+                csv_by_order[order] = csv_row
+
+    pending_orders: List[int] = []
+    for order, sample in enumerate(positive_samples):
+        sample_index = int(sample["index"])
+        if args.start_index is not None and sample_index < args.start_index:
+            continue
+        if args.resume and judgments_by_order[order] is not None and csv_by_order[order] is not None:
+            continue
+        pending_orders.append(order)
+
+    print(f"pending_samples={len(pending_orders)}")
 
     if args.workers == 1:
-        for order, sample in enumerate(positive_samples):
+        for order in pending_orders:
+            sample = positive_samples[order]
             judgment, csv_row = process_sample(
                 sample,
                 api_base=api_base,
@@ -478,15 +595,14 @@ def main() -> None:
                     f"{judgment['raw_response']}"
                 )
 
-            write_json(output_dir / "llm_judgments.json", [row for row in judgments_by_order if row is not None])
-            write_jsonl(output_dir / "llm_judgments.jsonl", [row for row in judgments_by_order if row is not None])
-            write_csv(output_dir / "llm_predictions.csv", [row for row in csv_by_order if row is not None])
+            write_jsonl(judgments_path, [row for row in judgments_by_order if row is not None])
+            write_csv(csv_path, [row for row in csv_by_order if row is not None])
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             future_to_order = {
                 executor.submit(
                     process_sample,
-                    sample,
+                    positive_samples[order],
                     api_base=api_base,
                     api_key=api_key,
                     model=model,
@@ -497,8 +613,8 @@ def main() -> None:
                     timeout=timeout,
                     retries=retries,
                     sleep_seconds=sleep_seconds,
-                ): (order, sample)
-                for order, sample in enumerate(positive_samples)
+                ): (order, positive_samples[order])
+                for order in pending_orders
             }
 
             for future in as_completed(future_to_order):
@@ -523,9 +639,8 @@ def main() -> None:
 
                 completed_judgments = [row for row in judgments_by_order if row is not None]
                 completed_csv_rows = [row for row in csv_by_order if row is not None]
-                write_json(output_dir / "llm_judgments.json", completed_judgments)
-                write_jsonl(output_dir / "llm_judgments.jsonl", completed_judgments)
-                write_csv(output_dir / "llm_predictions.csv", completed_csv_rows)
+                write_jsonl(judgments_path, completed_judgments)
+                write_csv(csv_path, completed_csv_rows)
 
     judgment_rows = [row for row in judgments_by_order if row is not None]
     csv_rows = [row for row in csv_by_order if row is not None]

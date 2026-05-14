@@ -21,7 +21,7 @@ Environment overrides:
 Defaults:
   ENV_FILE=LLM_TEST/.env
   CONFIG_FILE=LLM_TEST/exp.yaml
-  INPUT_JSON=LLM_TEST/intermediate/bigvul_cwe20_1_1_CodeBERT_imbalance_positive_0_1/positive_samples.json
+  INPUT_JSON=LLM_TEST/intermediate/bigvul_cwe20_1_1_CodeBERT_imbalance_positive_0_1/positive_samples.jsonl
   PROMPT_FILE=LLM_TEST/Prompt/CWE-20_1.txt
   EXAMPLE_RECORDS_JSON=LLM_TEST/intermediate/bigvul_cwe20_1_1_train_example_bank.json
   EXAMPLE_SIMILARITY_CSV=
@@ -36,7 +36,7 @@ fi
 LIMIT="${1:-}"
 ENV_FILE="${ENV_FILE:-LLM_TEST/.env}"
 CONFIG_FILE="${CONFIG_FILE:-LLM_TEST/exp.yaml}"
-INPUT_JSON="${INPUT_JSON:-LLM_TEST/intermediate/bigvul_cwe20_1_1_CodeBERT_imbalance_positive_0_1/positive_samples.json}"
+INPUT_JSON="${INPUT_JSON:-LLM_TEST/intermediate/bigvul_cwe20_1_1_CodeBERT_imbalance_positive_0_1/positive_samples.jsonl}"
 PROMPT_FILE="${PROMPT_FILE:-LLM_TEST/Prompt/CWE-20_1.txt}"
 EXAMPLE_RECORDS_JSON="${EXAMPLE_RECORDS_JSON:-LLM_TEST/intermediate/bigvul_cwe20_1_1_train_example_bank.json}"
 EXAMPLE_SIMILARITY_CSV="${EXAMPLE_SIMILARITY_CSV:-}"

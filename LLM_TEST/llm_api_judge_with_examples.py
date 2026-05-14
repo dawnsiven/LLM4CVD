@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 from config_utils import get_section, load_env_file, load_yaml_config, resolve_value
 from llm_api_judge import (
+    OUTPUT_FORMAT_INSTRUCTIONS,
     build_csv_row,
     build_judgment_row,
     build_output_name,
@@ -17,6 +18,7 @@ from llm_api_judge import (
     extract_text_from_response,
     is_retryable_exception,
     load_json,
+    normalize_prompt_template,
     parse_binary_label,
     summarize_error,
     write_csv,
@@ -31,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", default="LLM_TEST/exp.yaml", help="Path to YAML config.")
     parser.add_argument("--env_file", default="LLM_TEST/.env", help="Path to environment config file.")
-    parser.add_argument("--input_json", default=None, help="Path to positive_samples.json.")
+    parser.add_argument("--input_json", default=None, help="Path to positive_samples.jsonl.")
     parser.add_argument("--prompt_file", default=None, help="Prompt template with example placeholders.")
     parser.add_argument("--model", default=None, help="API model name.")
     parser.add_argument("--api_base", default=None, help="OpenAI-compatible API base URL.")
@@ -172,11 +174,13 @@ def choose_similar_example(
 
 
 def build_user_prompt_with_example(prompt_template: str, code: str, example_pattern: str, example_code: str) -> str:
+    prompt_template = normalize_prompt_template(prompt_template)
     if "<CODE>" in prompt_template or "<brief pattern>" in prompt_template or "<SIMILAR CODE>" in prompt_template:
         return (
             prompt_template.replace("<CODE>", code)
             .replace("<brief pattern>", example_pattern)
             .replace("<SIMILAR CODE>", example_code)
+            + f"\n\n{OUTPUT_FORMAT_INSTRUCTIONS}\n"
         )
 
     return (
@@ -187,6 +191,7 @@ def build_user_prompt_with_example(prompt_template: str, code: str, example_patt
         f"- Pattern: {example_pattern}\n"
         "- Snippet:\n"
         f"{example_code}\n"
+        f"\n{OUTPUT_FORMAT_INSTRUCTIONS}\n"
     )
 
 
@@ -403,11 +408,9 @@ def main() -> None:
                     f"{judgment['raw_response']}"
                 )
 
-        write_json(output_dir / "llm_judgments.json", judgment_rows)
         write_jsonl(output_dir / "llm_judgments.jsonl", judgment_rows)
         write_csv_with_examples(output_dir / "llm_predictions.csv", csv_rows)
 
-    write_json(output_dir / "llm_judgments.json", judgment_rows)
     write_jsonl(output_dir / "llm_judgments.jsonl", judgment_rows)
     write_csv_with_examples(output_dir / "llm_predictions.csv", csv_rows)
     write_json(

@@ -6,6 +6,16 @@
 
 `extract_positive_samples.py` -> `llm_api_judge.py` / `llm_local_judge.py` -> `recompute_metrics.py`
 
+如果你要做“整份 test 集直接用 LLM 检测”，现在也有一套独立补充流程：
+
+`prepare_full_test_samples.py` -> `llm_api_judge.py` -> `evaluate_llm_full_dataset.py`
+
+其中：
+
+- `prepare_full_test_samples.py` 只负责把原始 `*_test.json` 转成 `full_test_samples.jsonl`
+- `llm_api_judge.py` 负责实际调用 OpenAI 兼容接口
+- `evaluate_llm_full_dataset.py` 负责对整份 test 集的 LLM 检测结果计算指标
+
 目前这个目录既包含可执行脚本，也包含提示词、实验输出和临时结果。为了不影响现有脚本路径，我这次先按“职责分层”的方式整理使用规范，而不直接大规模移动脚本文件。
 
 ## 推荐组织方式
@@ -78,7 +88,7 @@ cp LLM_TEST/.env.example LLM_TEST/.env
 
 - `LLM_TEST/intermediate/<dataset_tag>/summary.json`
 - `LLM_TEST/intermediate/<dataset_tag>/positive_indices.json`
-- `LLM_TEST/intermediate/<dataset_tag>/positive_samples.json`
+- `LLM_TEST/intermediate/<dataset_tag>/positive_samples.jsonl`
 - `LLM_TEST/intermediate/<dataset_tag>/unmatched_indices.json`
 
 ### 3. 复审层
@@ -94,7 +104,6 @@ cp LLM_TEST/.env.example LLM_TEST/.env
 
 输出目录：
 
-- `LLM_TEST/output/<实验目录>/llm_judgments.json`
 - `LLM_TEST/output/<实验目录>/llm_judgments.jsonl`
 - `LLM_TEST/output/<实验目录>/llm_predictions.csv`
 - `LLM_TEST/output/<实验目录>/llm_summary.json`
@@ -176,7 +185,7 @@ bash LLM_TEST/run_review.sh \
 
 - `RESULTS_CSV=outputs/<result-model>/<dataset>/results.csv`
 - `DATA_JSON`：自动从 `data/` 下推断对应的 `*_test.json`
-- `INPUT_JSON=LLM_TEST/intermediate/<dataset>_<result-model>_positive_<min>_<max>/positive_samples.json`
+- `INPUT_JSON=LLM_TEST/intermediate/<dataset>_<result-model>_positive_<min>_<max>/positive_samples.jsonl`
 - `LLM 输出目录=LLM_TEST/output/<review_root>/<dataset>_<result-model>_<review_model>_<prompt_version>/`
 
 这时 `.env` 主要只需要保留“复审模型配置”，例如：
@@ -223,7 +232,7 @@ python3 LLM_TEST/llm_api_judge.py \
 python3 LLM_TEST/llm_api_judge_with_examples.py \
   --config LLM_TEST/exp.yaml \
   --env_file LLM_TEST/.env \
-  --input_json LLM_TEST/intermediate/bigvul_cwe20_1_1_UniXcoder_imbalance_positive_0_1/positive_samples.json \
+  --input_json LLM_TEST/intermediate/bigvul_cwe20_1_1_UniXcoder_imbalance_positive_0_1/positive_samples.jsonl \
   --prompt_file LLM_TEST/Prompt/CWE-20_1.txt \
   --example_records_json error_similarity_analysis/cwe20_bundle/bigvul_cwe20_1_1/codebert_errors.json \
   --example_similarity_csv error_similarity_analysis/cwe20_bundle/bigvul_cwe20_1_1/similarity/codebert_errors_mean_top10.csv \
@@ -239,7 +248,7 @@ python3 LLM_TEST/llm_api_judge_with_examples.py \
 
 ```bash
 python3 LLM_TEST/llm_local_judge.py \
-  --input_json LLM_TEST/intermediate/<dataset_tag>/positive_samples.json \
+  --input_json LLM_TEST/intermediate/<dataset_tag>/positive_samples.jsonl \
   --prompt_file LLM_TEST/Prompt/CWE-119.txt \
   --model llama3.2 \
   --output_by_prompt_version
@@ -301,7 +310,7 @@ python3 LLM_TEST/ensemble_vote.py \
 
 - `summary.json`：提取统计信息
 - `positive_indices.json`：被抽中的样本索引
-- `positive_samples.json`：后续给 LLM 的输入
+- `positive_samples.jsonl`：后续给 LLM 的输入
 - `unmatched_indices.json`：没对齐上的索引
 
 ### `output/`
@@ -345,7 +354,7 @@ python3 LLM_TEST/ensemble_vote.py \
 每次新实验只做下面几件事：
 
 1. 复制一个新的 `.env` 模板，改成本次实验参数。
-2. 先跑 `extract_positive_samples.py`，确认 `positive_samples.json` 正常。
+2. 先跑 `extract_positive_samples.py`，确认 `positive_samples.jsonl` 正常。
 3. 再跑 `llm_api_judge.py` 或 `llm_local_judge.py`。
 4. 跑 `recompute_metrics.py` 生成最终指标。
 5. 如果是对比实验，再跑 `ensemble_vote.py`。
