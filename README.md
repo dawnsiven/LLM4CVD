@@ -120,6 +120,7 @@ http://127.0.0.1:8000/docs
 
 The main API groups are:
 
+- `POST /api/frontend/code-inference`: run direct single-code inference with a trained CodeBERT or UniXcoder checkpoint
 - `POST /api/jobs/classical`: trigger `train.sh` or `test.sh`
 - `POST /api/jobs/classical-imbalance`: trigger `train_imbalance.sh` or `test_imbalance.sh`
 - `POST /api/jobs/llm`: trigger `finetune.sh` or `inference.sh`
