@@ -25,6 +25,7 @@ LLM_TEST/exp.yaml
 LLM_TEST/.env
 LLM_TEST/test_baidu_api.py
 LLM_TEST/output/*
+LLM_TEST/Prompt/*
 LLM_TEST/intermediate/*
 improve_recall/output/*
 improve_recall/output_summary/*
