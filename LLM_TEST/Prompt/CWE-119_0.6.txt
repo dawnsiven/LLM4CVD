@@ -8,13 +8,3 @@ You must only output "no" if you can clearly identify:
 If any of these are missing, output "yes".
 Before giving the final answer, verify that the reported source, sink, and missing_check are consistent with the actual code location and logic.
 Do not report a vulnerability location unless you have checked it against the code.
-
-Output in JSON format:
-{
-"vulnerable": "yes/no",
-"cwe": "CWE-119",
-"source": "...",
-"sink": "...",
-"missing_check": "...",
-"reason": "..."
-}

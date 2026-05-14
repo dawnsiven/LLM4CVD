@@ -8,12 +8,3 @@ You must only output "no" if you can clearly identify:
 If any of these are missing, output "yes".
 Important:
 this is a positive-case review Task.
-Output in JSON format:
-{
-"vulnerable": "yes/no",
-"cwe": "CWE-119",
-"source": "...",
-"sink": "...",
-"missing_check": "...",
-"reason": "..."
-}

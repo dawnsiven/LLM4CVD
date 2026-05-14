@@ -15,12 +15,3 @@ Step 4: Check whether proper bounds checking exists:
 Step 5: Determine whether unsafe memory access is possible
 Important:
 Even if the code looks safe, carefully verify boundary conditions.
-Output in JSON format:
-{
-"vulnerable": "yes/no",
-"cwe": "CWE-119",
-"source": "...",
-"sink": "...",
-"missing_check": "...",
-"reason": "..."
-}

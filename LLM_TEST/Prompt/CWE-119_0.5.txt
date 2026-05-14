@@ -10,12 +10,3 @@ Before giving the final answer, verify that the reported source, sink, and missi
 Do not report a vulnerability location unless you have checked it against the code.
 Important:
 this is a positive-case review Task.
-Output in JSON format:
-{
-"vulnerable": "yes/no",
-"cwe": "CWE-119",
-"source": "...",
-"sink": "...",
-"missing_check": "...",
-"reason": "..."
-}

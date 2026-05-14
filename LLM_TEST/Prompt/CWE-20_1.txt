@@ -21,9 +21,3 @@ Steps:
 3. Identify dangerous usage
 4. Compare with the similar case
 5. Decide if validation is insufficient
-
-Output JSON:
-{
-  "vulnerable": "yes/no",
-  "reason": "..."
-}

@@ -42,13 +42,3 @@ Important:
 Do not report a vulnerability just because input is used.
 Carefully verify whether the code enforces sufficient validation for the specific usage context.
 If validation exists but is incomplete or can be bypassed, report it.
-
-Output in JSON format:
-{
-  "vulnerable": "yes/no",
-  "cwe": "CWE-20",
-  "source": "...",
-  "sink": "...",
-  "missing_check": "...",
-  "reason": "..."
-}
